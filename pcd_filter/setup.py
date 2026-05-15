@@ -22,6 +22,8 @@ setup(
         'console_scripts': [
         'pcd_filter = pcd_filter.pcd_filter:main',
         'obs_bayes_map = pcd_filter.obs_bayes_map:main',
+        'bayes_map = pcd_filter.bayes_map:main',
+        'bayes_map_average = pcd_filter.bayes_map_average:main',
         ],
     },
 )

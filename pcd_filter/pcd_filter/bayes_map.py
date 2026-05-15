@@ -118,6 +118,21 @@ class ObsBayesMap(Node):
         
         return x, y, z, intensity
     
+    def occ_model(self, d):
+        sigma = 3.0
+        p0 = 0.95
+        p_min = 0.65
+        return max(p_min, p0 * np.exp(-(d**2) / (2 * sigma**2)))
+
+    def free_model(self, d):
+        p0 = 0.2
+        lam = 5.0
+        return p0 + (0.5 - p0) * np.exp(-d / lam)
+
+    def logit(self, p):
+        p = np.clip(p, 1e-4, 1-1e-4)
+        return np.log(p / (1 - p))
+    
     def bresenham(self, x0, y0, x1, y1):
         points = []
         dx = abs(x1 - x0)
@@ -235,10 +250,11 @@ class ObsBayesMap(Node):
             b = bin_idx[i]
             if b not in min_dist or dist[i] < min_dist[b]:
                 min_dist[b] = dist[i]
-                min_points[b] = (gx[i], gy[i])
+                min_points[b] = (gx[i], gy[i], dist[i])
         
         filterd_points = list(min_points.values())
 
+        '''
         for angle in angle_bins:
             global_angle = theta + angle
             x1 = int(x0 + max_range * np.cos(global_angle) * self.grid_pixel)
@@ -251,7 +267,58 @@ class ObsBayesMap(Node):
                     break
 
                 self.log_odds[cx, cy] += self.l_free * 0.5
-        
+        '''
+        for b in range(len(angle_bins)):
+
+            angle = angle_bins[b]
+            global_angle = theta + angle
+
+            x0 = int(self.MAP_RANGE * self.grid_pixel)
+            y0 = int(self.MAP_RANGE * self.grid_pixel)
+
+            # =========================
+            # 🔴 ヒットあり
+            # =========================
+            if b in min_points:
+
+                gx_i, gy_i, d = min_points[b]
+
+                line = self.bresenham(x0, y0, gx_i, gy_i)
+
+                # free（手前）
+                for k, (cy, cx) in enumerate(line[:-3]):
+                    if 0 <= cx < self.size and 0 <= cy < self.size:
+                        d = k / self.grid_pixel
+                        p_free = self.free_model(d)
+                        self.log_odds[cx, cy] += 0.3 * (self.logit(p_free) - self.logit(0.5))
+
+                # occ（最後）
+                #d = len(line) / self.grid_pixel
+                p_occ = self.occ_model(d)
+                #self.log_odds[gx_i, gy_i] += self.l_occ
+                self.log_odds[gx_i, gy_i] += 3.5 * (self.logit(p_occ) - self.logit(0.5))
+
+            # =========================
+            # 🔵 ヒットなし
+            # =========================
+            else:
+                #self.log_odds[cx, cy] += -0.02
+                #self.log_odds[cx, cy] *= 0.98
+                
+                x1 = int(x0 + max_range * np.cos(global_angle) * self.grid_pixel)
+                y1 = int(y0 + max_range * np.sin(global_angle) * self.grid_pixel)
+
+                line = self.bresenham(x0, y0, x1, y1)
+
+                for k, (cy, cx) in enumerate(line):
+                    if 0 <= cx < self.size and 0 <= cy < self.size:
+                        d = k / self.grid_pixel
+                        p_free = self.free_model(d)
+
+                        # 弱め更新（重要）
+                        self.log_odds[cx, cy] += 0.2 * (self.logit(p_free) - self.logit(0.5))
+                
+        '''
         for (gx_i, gy_i) in filterd_points:
             obs_array[gx_i, gy_i] = 1
             line = self.bresenham(x0, y0, gx_i, gy_i)
@@ -265,7 +332,7 @@ class ObsBayesMap(Node):
                 self.log_odds[gx_i, gy_i] += self.l_occ
         
         obs_array = cv2.dilate(obs_array, np.ones((3,3), np.uint8))
-
+        '''
         '''
         for angle in angle_bins:
             global_angle = theta + angle
@@ -324,13 +391,15 @@ class ObsBayesMap(Node):
         observed_mask = np.abs(self.log_odds) > 0.01 # 0.01
 
         # ===== OccupancyGrid形式 =====
-        occ = np.full_like(prob, -1, dtype=np.int8)  # unknown = -1
+        #occ = np.full_like(prob, -1, dtype=np.int8)  # unknown = -1
+        occ = (prob * 100).astype(np.int8)
+        occ[~observed_mask] = -1
 
         #occ[static_mask] = 100   # 黒（障害物）
         #occ[dynamic_mask] = 0     # 白（自由空間）
 
-        occ[observed_mask & static_mask] = 100
-        occ[observed_mask & dynamic_mask] = 0
+        #occ[observed_mask & static_mask] = 100
+        #occ[observed_mask & dynamic_mask] = 0
 
         # ===== 前方領域の切り出し =====
         forward_min = 0.0

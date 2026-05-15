@@ -36,14 +36,20 @@ class ObsBayesMap(Node):
         super().__init__('obs_bayes_map')
 
         # subscriber
-        self.pcd_obs_sub = self.create_subscription(sensor_msgs.PointCloud2, '/pcd_segment_ground', self.publish_map, 10)
+        self.pcd_ground_sub = self.create_subscription(sensor_msgs.PointCloud2, '/pcd_segment_ground', self.ground_points_callback, 10)
+        self.pcd_middle_sub = self.create_subscription(sensor_msgs.PointCloud2, '/pcd_segment_middle', self.middle_points_callback, 10)
+        self.pcd_high_sub = self.create_subscription(sensor_msgs.PointCloud2, '/pcd_segment_high', self.high_points_callback, 10)
         self.local_odom_sub = self.create_subscription(nav_msgs.Odometry,'/fusion/odom', self.get_local_odom, 10)
         self.global_odom_sub = self.create_subscription(nav_msgs.Odometry,'/fusion/odom', self.get_global_odom, 10)
 
         # publisher
         self.pcd_ground_global_publisher = self.create_publisher(sensor_msgs.PointCloud2, 'pcd_ground_global', 10) 
-        self.reflect_map_local_publisher = self.create_publisher(OccupancyGrid, 'reflect_map_bayes_local', 10)
-        self.reflect_map_global_publisher = self.create_publisher(OccupancyGrid, 'reflect_map_bayes_global', 10)
+        self.reflect_map_ground_local_publisher = self.create_publisher(OccupancyGrid, 'reflect_map_ground_local', 10)
+        self.reflect_map_middle_local_publisher = self.create_publisher(OccupancyGrid, 'reflect_map_middle_local', 10)
+        self.reflect_map_high_local_publisher = self.create_publisher(OccupancyGrid, 'reflect_map_high_local', 10)
+        self.reflect_map_ground_global_publisher = self.create_publisher(OccupancyGrid, 'reflect_map_ground_global', 10)
+        self.reflect_map_middle_global_publisher = self.create_publisher(OccupancyGrid, 'reflect_map_middle_global', 10)
+        self.reflect_map_high_global_publisher = self.create_publisher(OccupancyGrid, 'reflect_map_high_global', 10)
 
         #timer
         self.timer = self.create_timer(0.1, self.timer_callback)
@@ -79,7 +85,7 @@ class ObsBayesMap(Node):
         self.map_data_gl = 0
         self.map_data_gl_flag = 0
         self.MAKE_GL_MAP_FLAG = 0
-        self.save_dir = os.path.expanduser('~/ros2_ws/src/map/new_waypoint_map')
+        self.save_dir = os.path.expanduser('~/ros2_ws/src/map/test_waypoint_map')
         yaml.add_representer(OrderedDict, ordered_dict_representer, Dumper=MyDumper)
         yaml.add_representer(list, list_representer, Dumper=MyDumper)
         
@@ -117,23 +123,40 @@ class ObsBayesMap(Node):
         self.ekf_theta_y = 0.0 #[deg]
         self.ekf_theta_z = 0.0 #[deg]
 
+        #points array init
+        self.ground_points = np.zeros((4, 0), dtype=np.float32)
+        self.middle_points = np.zeros((4, 0), dtype=np.float32)
+        self.high_points = np.zeros((4,0), dtype=np.float32)
+
         #mid360 buff
         self.pcd_ground_buff = np.array([[],[],[],[]]);
+        self.pcd_middle_buff = np.array([[],[],[],[]]);
+        self.pcd_high_buff = np.array([[],[],[],[]]);
 
         # map flag
         self.map_data_flag = 0
         self.map_data_gl_flag = 0
         self.map_data = 0
         self.map_data_gl = 0
-        self.MAKE_GL_MAP_FLAG = 1
-        self.save_dir = os.path.expanduser('~/ros2_ws/src/map/new_waypoint_map')
+        self.MAKE_GL_MAP_FLAG = 0
+        self.save_dir = os.path.expanduser('~/ros2_ws/src/map/test_waypoint_map')
+
+        #start flag
+        self.start_flag = 0
 
     def timer_callback(self):
+        if self.start_flag == 0:
+            return
+        self.reflect_map(self.t_stamp, self.ground_points, self.middle_points, self.high_points)
         if self.map_data_flag > 0:
-            self.reflect_map_local_publisher.publish(self.map_data)     
+            self.reflect_map_ground_local_publisher.publish(self.map_data_ground)
+            self.reflect_map_middle_local_publisher.publish(self.map_data_middle)
+            self.reflect_map_high_local_publisher.publish(self.map_data_high)
         #gl map
         if self.map_data_gl_flag > 0:
-            self.reflect_map_global_publisher.publish(self.map_data_gl) 
+            self.reflect_map_ground_global_publisher.publish(self.map_data_ground_gl) 
+            self.reflect_map_middle_global_publisher.publish(self.map_data_middle_gl) 
+            self.reflect_map_high_global_publisher.publish(self.map_data_high_gl) 
     
     def get_local_odom(self, msg):
         self.position_x = msg.pose.pose.position.x
@@ -180,7 +203,48 @@ class ObsBayesMap(Node):
         
         return x, y, z, intensity
 
-    def publish_map(self, msg):
+    def ground_points_callback(self, msg):
+        #self.log_odds.fill(0) # local
+        t_stamp = msg.header.stamp
+        self.t_stamp = t_stamp
+        x, y, z, intensity = self.pointcloud2_to_array(msg)
+        
+        theta = self.theta_z * np.pi / 180.0
+
+        x_rot = x * np.cos(theta) - y * np.sin(theta)
+        y_rot = x * np.sin(theta) + y * np.cos(theta)
+
+        # 平行移動（odomへ）
+        x_global = x_rot # local
+        y_global = y_rot # local
+
+        # ===== グリッド化 =====
+        gx = np.floor((y_global + self.MAP_RANGE) * self.grid_pixel).astype(np.int32)
+        gy = np.floor((x_global + self.MAP_RANGE) * self.grid_pixel).astype(np.int32)
+
+        valid = (gx >= 0) & (gx < self.size) & (gy >= 0) & (gy < self.size)
+  
+        ground_points = []
+
+        xv = x_rot[valid]
+        yv = y_rot[valid]
+        iv = intensity[valid]
+
+        global_x = np.floor((yv + self.MAP_RANGE) * self.grid_pixel).astype(int)
+        global_y = np.floor((xv + self.MAP_RANGE) * self.grid_pixel).astype(int)
+
+        for x, y, inten, ix, iy in zip(xv, yv, iv, global_x, global_y):
+            if 0 <= ix < self.size and 0 <= iy < self.size:
+                ground_points.append([x, y, 0.0, inten])
+
+        self.ground_points = np.array(ground_points, dtype=np.float32).T
+
+        self.start_flag = 1
+
+        # publish reflect map
+        #self.reflect_map(t_stamp, ground_points)
+
+    def middle_points_callback(self, msg):
         #self.log_odds.fill(0) # local
         t_stamp = msg.header.stamp
         x, y, z, intensity = self.pointcloud2_to_array(msg)
@@ -200,7 +264,7 @@ class ObsBayesMap(Node):
 
         valid = (gx >= 0) & (gx < self.size) & (gy >= 0) & (gy < self.size)
   
-        static_points = []
+        middle_points = []
 
         xv = x_rot[valid]
         yv = y_rot[valid]
@@ -209,18 +273,60 @@ class ObsBayesMap(Node):
         global_x = np.floor((yv + self.MAP_RANGE) * self.grid_pixel).astype(int)
         global_y = np.floor((xv + self.MAP_RANGE) * self.grid_pixel).astype(int)
 
-        static_points = []
+        for x, y, inten, ix, iy in zip(xv, yv, iv, global_x, global_y):
+            if 0 <= ix < self.size and 0 <= iy < self.size:
+                middle_points.append([x, y, 0.0, inten])
+
+        self.middle_points = np.array(middle_points, dtype=np.float32).T
+
+        # publish reflect map
+        #self.reflect_map(t_stamp, middle_points)
+
+    def high_points_callback(self, msg):
+        #self.log_odds.fill(0) # local
+        t_stamp = msg.header.stamp
+        x, y, z, intensity = self.pointcloud2_to_array(msg)
+        
+        theta = self.theta_z * np.pi / 180.0
+
+        x_rot = x * np.cos(theta) - y * np.sin(theta)
+        y_rot = x * np.sin(theta) + y * np.cos(theta)
+
+        # 平行移動（odomへ）
+        x_global = x_rot # local
+        y_global = y_rot # local
+
+        # ===== グリッド化 =====
+        gx = np.floor((y_global + self.MAP_RANGE) * self.grid_pixel).astype(np.int32)
+        gy = np.floor((x_global + self.MAP_RANGE) * self.grid_pixel).astype(np.int32)
+
+        valid = (gx >= 0) & (gx < self.size) & (gy >= 0) & (gy < self.size)
+  
+        high_points = []
+
+        xv = x_rot[valid]
+        yv = y_rot[valid]
+        iv = intensity[valid]
+
+        global_x = np.floor((yv + self.MAP_RANGE) * self.grid_pixel).astype(int)
+        global_y = np.floor((xv + self.MAP_RANGE) * self.grid_pixel).astype(int)
 
         for x, y, inten, ix, iy in zip(xv, yv, iv, global_x, global_y):
             if 0 <= ix < self.size and 0 <= iy < self.size:
-                static_points.append([x, y, 0.0, inten])
-
-        static_points = np.array(static_points, dtype=np.float32).T
+                high_points.append([x, y, 0.0, inten])
+        
+        self.high_points = np.array(high_points, dtype=np.float32).T
+        
+        #if len(high_points) == 0:
+        #    self.high_points = np.zeros((4,0), dtype=np.float32)
+        #    return
+        #else:
+        #   self.high_points = np.array(high_points, dtype=np.float32).T
 
         # publish reflect map
-        self.reflect_map(t_stamp, static_points)
+        #self.reflect_map(t_stamp, high_points)
 
-    def reflect_map(self, t_stamp, points):
+    def reflect_map(self, t_stamp, ground_points, middle_points, high_points):
         
         #print stamp message
         #t_stamp = msg.header.stamp
@@ -238,29 +344,68 @@ class ObsBayesMap(Node):
         ekf_position = np.array([ekf_position_x, ekf_position_y, ekf_position_z])
         ekf_theta_x=self.ekf_theta_x; ekf_theta_y=self.ekf_theta_y; ekf_theta_z=self.ekf_theta_z;
         #ground global
-        ground_rot, ground_rot_matrix = rotation_xyz(points[[0,1,2],:], theta_x, theta_y, theta_z)
-        ground_x_grobal = points[0,:] + position_x
-        ground_y_grobal = points[1,:] + position_y
-        ground_global = np.vstack((ground_x_grobal, ground_y_grobal, ground_rot[2,:], points[3,:]) , dtype=np.float32)
+        ground_rot, ground_rot_matrix = rotation_xyz(ground_points[[0,1,2],:], theta_x, theta_y, theta_z)
+        ground_x_grobal = ground_points[0,:] + position_x
+        ground_y_grobal = ground_points[1,:] + position_y
+        ground_global = np.vstack((ground_x_grobal, ground_y_grobal, ground_rot[2,:], ground_points[3,:]) , dtype=np.float32)
+
+        #middle global
+        middle_rot, middle_rot_matrix = rotation_xyz(middle_points[[0,1,2],:], theta_x, theta_y, theta_z)
+        middle_x_grobal = middle_points[0,:] + position_x
+        middle_y_grobal = middle_points[1,:] + position_y
+        middle_global = np.vstack((middle_x_grobal, middle_y_grobal, middle_rot[2,:], middle_points[3,:]) , dtype=np.float32)
+        
+        #high global
+        high_rot, high_rot_matrix = rotation_xyz(high_points[[0,1,2],:], theta_x, theta_y, theta_z)
+        high_x_grobal = high_points[0,:] + position_x
+        high_y_grobal = high_points[1,:] + position_y
+        high_global = np.vstack((high_x_grobal, high_y_grobal, high_rot[2,:], high_points[3,:]) , dtype=np.float32)
         
         #map lim set
         map_lim_x_min = position_x + self.MAP_LIM_X_MIN;
         map_lim_x_max = position_x + self.MAP_LIM_X_MAX;
         map_lim_y_min = position_y + self.MAP_LIM_Y_MIN;
         map_lim_y_max = position_y + self.MAP_LIM_Y_MAX;
-        map_lim_ind = self.pcd_serch(self.pcd_ground_buff, map_lim_x_min, map_lim_x_max, map_lim_y_min, map_lim_y_max)
-        self.pcd_ground_buff = self.pcd_ground_buff[:,map_lim_ind]
+        map_lim_ground_ind = self.pcd_serch(self.pcd_ground_buff, map_lim_x_min, map_lim_x_max, map_lim_y_min, map_lim_y_max)
+        map_lim_middle_ind = self.pcd_serch(self.pcd_middle_buff, map_lim_x_min, map_lim_x_max, map_lim_y_min, map_lim_y_max)
+        map_lim_high_ind = self.pcd_serch(self.pcd_high_buff, map_lim_x_min, map_lim_x_max, map_lim_y_min, map_lim_y_max)
+        self.pcd_ground_buff = self.pcd_ground_buff[:,map_lim_ground_ind]
+        self.pcd_middle_buff= self.pcd_middle_buff[:,map_lim_middle_ind]
+        self.pcd_high_buff = self.pcd_high_buff[:,map_lim_high_ind]
         
-        #obs round&duplicated  :grid_size before:28239 after100:24592 after50:8894 after10:3879
+        #obs round&duplicated ground  :grid_size before:28239 after100:24592 after50:8894 after10:3879
         pcd_ground_buff = np.insert(self.pcd_ground_buff, len(self.pcd_ground_buff[0,:]), ground_global.T, axis=1)
-        points_round = np.round(pcd_ground_buff * self.ground_pixel) / self.ground_pixel
-        self.pcd_ground_buff =points_round[:,~pd.DataFrame({"x":points_round[0,:], "y":points_round[1,:], "z":points_round[2,:]}).duplicated()]
-        
-        #local reflect map
+        points_ground_round = np.round(pcd_ground_buff * self.ground_pixel) / self.ground_pixel
+        self.pcd_ground_buff =points_ground_round[:,~pd.DataFrame({"x":points_ground_round[0,:], "y":points_ground_round[1,:], "z":points_ground_round[2,:]}).duplicated()]
+
+        #obs round&duplicated middle  :grid_size before:28239 after100:24592 after50:8894 after10:3879
+        pcd_middle_buff = np.insert(self.pcd_middle_buff, len(self.pcd_middle_buff[0,:]), middle_global.T, axis=1)
+        points_middle_round = np.round(pcd_middle_buff * self.ground_pixel) / self.ground_pixel
+        self.pcd_middle_buff =points_middle_round[:,~pd.DataFrame({"x":points_middle_round[0,:], "y":points_middle_round[1,:], "z":points_middle_round[2,:]}).duplicated()]
+
+        #obs round&duplicated high  :grid_size before:28239 after100:24592 after50:8894 after10:3879
+        pcd_high_buff = np.insert(self.pcd_high_buff, len(self.pcd_high_buff[0,:]), high_global.T, axis=1)
+        points_high_round = np.round(pcd_high_buff * self.ground_pixel) / self.ground_pixel
+        self.pcd_high_buff =points_high_round[:,~pd.DataFrame({"x":points_high_round[0,:], "y":points_high_round[1,:], "z":points_high_round[2,:]}).duplicated()]
+
+        #local reflect ground map
         ground_reflect_conv = self.pcd_ground_buff[3,:]/255*100.0
         map_orientation = np.array([1.0, 0.0, 0.0, 0.0])
-        map_data_set = grid_map_set(self.pcd_ground_buff[1,:], self.pcd_ground_buff[0,:], ground_reflect_conv, position, self.ground_pixel, self.MAP_RANGE)
-        ##ekf pos local reflect map
+        map_data_ground_set = grid_map_set(self.pcd_ground_buff[1,:], self.pcd_ground_buff[0,:], ground_reflect_conv, position, self.ground_pixel, self.MAP_RANGE)
+
+        #local reflect middle map
+        middle_reflect_conv = self.pcd_middle_buff[3,:]/255*100.0
+        map_data_middle_set = grid_map_set(self.pcd_middle_buff[1,:], self.pcd_middle_buff[0,:], middle_reflect_conv, position, self.ground_pixel, self.MAP_RANGE)
+
+        #local reflect high map
+        high_reflect_conv = self.pcd_high_buff[3,:]/255*100.0
+        map_data_high_set = grid_map_set(self.pcd_high_buff[1,:], self.pcd_high_buff[0,:], high_reflect_conv, position, self.ground_pixel, self.MAP_RANGE)
+        #if self.pcd_high_buff.shape[1] == 0:
+        #    map_data_high_set = np.zeros((self.size, self.size), dtype=np.uint8)
+        #else:
+        #    map_data_high_set = grid_map_set(self.pcd_high_buff[1,:], self.pcd_high_buff[0,:], high_reflect_conv, position, self.ground_pixel, self.MAP_RANGE)
+
+        ##ekf pos ground local reflect map
         ekf_ground_buff_x = self.pcd_ground_buff[0,:] - position[0]
         ekf_ground_buff_y = self.pcd_ground_buff[1,:] - position[1]
         ekf_ground_buff_z = self.pcd_ground_buff[2,:] - position[2]
@@ -270,44 +415,86 @@ class ObsBayesMap(Node):
         ekf_ground_set_y = ekf_ground_rot[1,:] + ekf_position[1]
         ekf_ground_set_z = ekf_ground_rot[2,:] + ekf_position[2]
         ekf_ground_set = np.vstack((ekf_ground_set_x, ekf_ground_set_y, ekf_ground_set_z))
-        map_data_set_4save = grid_map_set(ekf_ground_set[1,:], ekf_ground_set[0,:], ground_reflect_conv, ekf_position, self.ground_pixel, self.MAP_RANGE)
-        print(f"map_data_set ={map_data_set.shape}")
+        #map_data_set_4save = grid_map_set(ekf_ground_set[1,:], ekf_ground_set[0,:], ground_reflect_conv, ekf_position, self.ground_pixel, self.MAP_RANGE)
+        #print(f"map_data_ground_set ={map_data_ground_set.shape}")
+
+        ##ekf pos middle local reflect map
+        ekf_middle_buff_x = self.pcd_middle_buff[0,:] - position[0]
+        ekf_middle_buff_y = self.pcd_middle_buff[1,:] - position[1]
+        ekf_middle_buff_z = self.pcd_middle_buff[2,:] - position[2]
+        ekf_middle_buff = np.vstack((ekf_middle_buff_x, ekf_middle_buff_y, ekf_middle_buff_z))
+        ekf_middle_rot, ekf_middle_rot_matrix = rotation_xyz(ekf_middle_buff, ekf_theta_x-theta_x, ekf_theta_y-theta_y, ekf_theta_z-theta_z)
+        ekf_middle_set_x = ekf_middle_rot[0,:] + ekf_position[0]
+        ekf_middle_set_y = ekf_middle_rot[1,:] + ekf_position[1]
+        ekf_middle_set_z = ekf_middle_rot[2,:] + ekf_position[2]
+        ekf_middle_set = np.vstack((ekf_middle_set_x, ekf_middle_set_y, ekf_middle_set_z))
+        #map_data_set_4save = grid_map_set(ekf_ground_set[1,:], ekf_ground_set[0,:], ground_reflect_conv, ekf_position, self.ground_pixel, self.MAP_RANGE)
+        #print(f"map_data_middle_set ={map_data_middle_set.shape}")
+
+        ##ekf pos high local reflect map
+        ekf_high_buff_x = self.pcd_high_buff[0,:] - position[0]
+        ekf_high_buff_y = self.pcd_high_buff[1,:] - position[1]
+        ekf_high_buff_z = self.pcd_high_buff[2,:] - position[2]
+        ekf_high_buff = np.vstack((ekf_high_buff_x, ekf_high_buff_y, ekf_high_buff_z))
+        ekf_high_rot, ekf_high_rot_matrix = rotation_xyz(ekf_high_buff, ekf_theta_x-theta_x, ekf_theta_y-theta_y, ekf_theta_z-theta_z)
+        ekf_high_set_x = ekf_high_rot[0,:] + ekf_position[0]
+        ekf_high_set_y = ekf_high_rot[1,:] + ekf_position[1]
+        ekf_high_set_z = ekf_high_rot[2,:] + ekf_position[2]
+        ekf_high_set = np.vstack((ekf_high_set_x, ekf_high_set_y, ekf_high_set_z))
+        #map_data_set_4save = grid_map_set(ekf_ground_set[1,:], ekf_ground_set[0,:], ground_reflect_conv, ekf_position, self.ground_pixel, self.MAP_RANGE)
+        #print(f"map_data_high_set ={map_data_high_set.shape}")
 	
         #GL reflect map
         #map_data_gl_set = grid_map_set(self.pcd_ground_buff[1,:], self.pcd_ground_buff[0,:], ground_reflect_conv, position, self.ground_pixel, self.MAP_RANGE_GL)
-        map_data_gl_set = grid_map_set(ekf_ground_set[1,:], ekf_ground_set[0,:], ground_reflect_conv, ekf_position, self.ground_pixel, self.MAP_RANGE_GL)
-        print(f"map_data_set ={map_data_set.shape}")
+        map_data_ground_gl_set = grid_map_set(ekf_ground_set[1,:], ekf_ground_set[0,:], ground_reflect_conv, ekf_position, self.ground_pixel, self.MAP_RANGE_GL)
+        map_data_middle_gl_set = grid_map_set(ekf_middle_set[1,:], ekf_middle_set[0,:], middle_reflect_conv, ekf_position, self.ground_pixel, self.MAP_RANGE_GL)
+        map_data_high_gl_set = grid_map_set(ekf_high_set[1,:], ekf_high_set[0,:], high_reflect_conv, ekf_position, self.ground_pixel, self.MAP_RANGE_GL)
+        #if self.pcd_high_buff.shape[1] == 0:
+        #    map_data_high_gl_set = np.zeros((self.size, self.size), dtype=np.uint8)
+        #else:
+        #    map_data_high_gl_set = grid_map_set(ekf_high_set[1,:], ekf_high_set[0,:], high_reflect_conv, ekf_position, self.ground_pixel, self.MAP_RANGE_GL)
+        #print(f"map_data_ground_set ={map_data_ground_set.shape}")
 	
         
         #publish for rviz2 
         #global ground
         ground_global_msg = point_cloud_intensity_msg(self.pcd_ground_buff.T, t_stamp, 'odom')
         self.pcd_ground_global_publisher.publish(ground_global_msg) 
-        #local map
-        self.map_data = make_map_msg(map_data_set, self.ground_pixel, position, map_orientation, t_stamp, self.MAP_RANGE, "odom")
+        #local map ground
+        self.map_data_ground = make_map_msg(map_data_ground_set, self.ground_pixel, position, map_orientation, t_stamp, self.MAP_RANGE, "odom")
+        #local map middle
+        self.map_data_middle = make_map_msg(map_data_middle_set, self.ground_pixel, position, map_orientation, t_stamp, self.MAP_RANGE, "odom")
+        #local map high
+        self.map_data_high = make_map_msg(map_data_high_set, self.ground_pixel, position, map_orientation, t_stamp, self.MAP_RANGE, "odom")
         #self.map_data = make_map_msg(map_data_set_4save, self.ground_pixel, ekf_position, map_orientation, t_stamp, self.MAP_RANGE, "odom")
         self.map_data_flag = 1
         #self.reflect_map_local_publisher.publish(self.map_data)     
-        #gl map
-        self.map_data_gl = make_map_msg(map_data_gl_set, self.ground_pixel, ekf_position, map_orientation, t_stamp, self.MAP_RANGE_GL, "odom")
+        #gl map ground
+        self.map_data_ground_gl = make_map_msg(map_data_ground_gl_set, self.ground_pixel, ekf_position, map_orientation, t_stamp, self.MAP_RANGE_GL, "odom")
+        #gl map middle
+        self.map_data_middle_gl = make_map_msg(map_data_middle_gl_set, self.ground_pixel, ekf_position, map_orientation, t_stamp, self.MAP_RANGE_GL, "odom")
+        #gl map high
+        self.map_data_high_gl = make_map_msg(map_data_high_gl_set, self.ground_pixel, ekf_position, map_orientation, t_stamp, self.MAP_RANGE_GL, "odom")
         #self.reflect_map_global_publisher.publish(self.map_data_gl) 
         self.map_data_gl_flag = 1
         
         if self.MAKE_GL_MAP_FLAG == 1:
             #self.make_ref_map(position_x, position_y, theta_z)
             #self.make_ref_map(ekf_position_x, ekf_position_y, ekf_theta_z)
-            self.make_ref_map(map_data_gl_set, ekf_position_x, ekf_position_y, ekf_theta_z)
+            self.make_ref_map(map_data_ground_gl_set, ekf_position_x, ekf_position_y, ekf_theta_z, layer="ground")
+            self.make_ref_map(map_data_middle_gl_set, ekf_position_x, ekf_position_y, ekf_theta_z, layer="middle")
+            self.make_ref_map(map_data_high_gl_set, ekf_position_x, ekf_position_y, ekf_theta_z, layer="high")
         
-    def make_ref_map(self, image, position_x, position_y, theta_z):
+    def make_ref_map(self, image, position_x, position_y, theta_z, layer):
         map_pos_diff = math.sqrt((position_x - self.map_position_x_buff)**2 + (position_y - self.map_position_y_buff)**2)
         map_theta_diff = abs(theta_z -  self.map_theta_z_buff)
         if ( (map_pos_diff > 10) or ((map_pos_diff > 2) and (map_theta_diff > 40)) ):
             map_number_str = str(self.map_number).zfill(3)
             # 保存ディレクトリの絶対パスを取得
             #save_path = os.path.join(self.save_dir, f'waypoint_map_{map_number_str}')
-            pgm_filename = os.path.join(self.save_dir, f'waypoint_map_{map_number_str}' + ".pgm")
-            pgm_filename_meta = os.path.join(f'waypoint_map_{map_number_str}' + ".pgm")
-            yaml_filename = os.path.join(self.save_dir, f'waypoint_map_{map_number_str}' + ".yaml")
+            pgm_filename = os.path.join(self.save_dir, f'waypoint_map_{layer}_{map_number_str}' + ".pgm")
+            pgm_filename_meta = os.path.join(f'waypoint_map_{layer}_{map_number_str}' + ".pgm")
+            yaml_filename = os.path.join(self.save_dir, f'waypoint_map_{layer}_{map_number_str}' + ".yaml")
             # ディレクトリが存在するか確認、存在しない場合は作成
             os.makedirs(self.save_dir, exist_ok=True)
             '''
@@ -361,7 +548,7 @@ class ObsBayesMap(Node):
             self.map_number += 1
 
     def pcd_serch(self, pointcloud, x_min, x_max, y_min, y_max):
-        pcd_ind = (( (x_min <= pointcloud[0,:]) * (pointcloud[0,:] <= x_max)) * ((y_min <= pointcloud[1,:]) * (pointcloud[1,:]) <= y_max ) )
+        pcd_ind = (( (x_min <= pointcloud[0,:]) * (pointcloud[0,:] <= x_max)) * ((y_min <= pointcloud[1,:]) * (pointcloud[1,:]) <= y_max ))
         return pcd_ind
 
 # カスタムDumperの設定を追加 

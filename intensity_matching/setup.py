@@ -23,6 +23,8 @@ setup(
         'intensity_map_beys = intensity_matching.intensity_map_beys:main',
         'reflection_intensity_map_beys = intensity_matching.reflection_intensity_map_beys:main',
         'reflection_intensity_map_discrete = intensity_matching.reflection_intensity_map_discrete:main',
+        'static_intensity_map = intensity_matching.static_intensity_map:main',
+        'reflection_intensity_map_multi_sub = intensity_matching.reflection_intensity_map_multi_sub:main',
         ],
     },
 )

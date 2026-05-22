@@ -43,6 +43,9 @@ class ObsBayesMap(Node):
         self.miss_score = np.zeros((self.size, self.size), dtype=np.float32)
         self.logodds = np.zeros((self.size, self.size), dtype=np.float32)
 
+        self.shift_residual_x = 0.0
+        self.shift_residual_y = 0.0
+
         # forgetting factor
         self.decay = 0.995
 
@@ -89,16 +92,31 @@ class ObsBayesMap(Node):
         x_rot = x * np.cos(theta) - y * np.sin(theta)
         y_rot = x * np.sin(theta) + y * np.cos(theta)
 
+        # Odometry
+        position_x = self.position_x
+        position_y = self.position_y
+        prev_x = self.prev_x
+        prev_y = self.prev_y
+
         # local map
         x_global = x_rot
         y_global = y_rot
 
         # Map shift
-        dx = self.position_x - self.prev_x
-        dy = self.position_y - self.prev_y
+        dx = position_x - prev_x
+        dy = position_y - prev_y
 
-        shift_x = round(dx * self.grid_pixel)
-        shift_y = round(dy * self.grid_pixel)
+        self.shift_residual_x += dx * self.grid_pixel
+        self.shift_residual_y += dy * self.grid_pixel
+
+        shift_x = int(self.shift_residual_x)
+        shift_y = int(self.shift_residual_y)
+
+        self.shift_residual_x -= shift_x
+        self.shift_residual_y -= shift_y
+
+        #shift_x = round(dx * self.grid_pixel)
+        #shift_y = round(dy * self.grid_pixel)
 
         self.hit_score = np.roll(self.hit_score, -shift_x, axis=1)
         self.hit_score = np.roll(self.hit_score, -shift_y, axis=0)
@@ -125,31 +143,34 @@ class ObsBayesMap(Node):
             self.miss_score[:-shift_y, :] = 0
             self.logodds[:-shift_y, :] = 0
 
+        # Polar bin
+        angle_polar = np.arctan2(y_global, x_global)
+        angle_bins = np.linspace(-np.pi, np.pi, 720)
+        bin_idx = np.digitize(angle_polar, angle_bins) - 1
+        
         # Grid
-        gx = np.floor((y_global + self.MAP_RANGE)* self.grid_pixel).astype(np.int32)
-        gy = np.floor((x_global + self.MAP_RANGE)* self.grid_pixel).astype(np.int32)
+        gx = np.round((y_global + self.MAP_RANGE)* self.grid_pixel).astype(np.int32)
+        gy = np.round((x_global + self.MAP_RANGE)* self.grid_pixel).astype(np.int32)
         dist = np.sqrt(x_global**2 + y_global**2)
         mask = dist < 15.0
 
         gx = gx[mask]
         gy = gy[mask]
         dist = dist[mask]
+        angle_polar = angle_polar[mask]
 
         valid = ((gx >= 0) & (gx < self.size) & (gy >= 0) & (gy < self.size))
 
         gx = gx[valid]
         gy = gy[valid]
         dist = dist[valid]
+        angle_polar = angle_polar[valid]
 
         # Sensor Origin
         x0 = int(self.MAP_RANGE * self.grid_pixel)
         y0 = int(self.MAP_RANGE * self.grid_pixel)
-
-        # Polar bin
-        angle_polar = np.arctan2(y_global, x_global)
-        angle_bins = np.linspace(-np.pi, np.pi, 2020)
-        bin_idx = np.digitize(angle_polar, angle_bins) - 1
-
+        
+        '''
         min_dist = {}
         min_points = {}
 
@@ -158,18 +179,32 @@ class ObsBayesMap(Node):
             if (count not in min_dist or dist[i] < min_dist[count]):
                 min_dist[count] = dist[i]
                 min_points[count] = (gx[i], gy[i], dist[i])
+        '''
+
+        ray_points = {}
+
+        for i in range(len(dist)):
+            angle = angle_polar[i]
+            count = int((angle + np.pi) / (2*np.pi) * 720)
+            d = dist[i]
+
+            if count not in ray_points:
+                ray_points[count] = (gx[i], gy[i], d)
+            elif d < ray_points[count][2]:
+                ray_points[count] = (gx[i], gy[i], d)
 
         # Ray casting
         max_range = 15.0
 
-        for count in range(len(angle_bins)):
+        #for count in range(len(angle_bins)):
+        for count, (gx_i, gy_i, d) in ray_points.items():
             angle = angle_bins[count]
             x1 = int(x0 + max_range * np.cos(angle) * self.grid_pixel)
             y1 = int(y0 + max_range * np.sin(angle) * self.grid_pixel)
 
             # OCCUPIED HIT
-            if count in min_points:
-                gx_i, gy_i, d = min_points[count]
+            if count in ray_points:
+                gx_i, gy_i, d = ray_points[count]
                 dx = gx_i - x0
                 dy = gy_i - y0
                 n = int(max(abs(dx), abs(dy)))
@@ -177,7 +212,7 @@ class ObsBayesMap(Node):
                 ys = np.linspace(y0, gy_i, n).astype(np.int32)
                 
                 # FREE UPDATE
-                for k in range(n-8):
+                for k in range(n-3):
                     cx = xs[k]
                     cy = ys[k]
                     if 0 <= cx < self.size and 0 <= cy < self.size:
@@ -206,22 +241,22 @@ class ObsBayesMap(Node):
         occ_log = (prob_log * 100).astype(np.int8)
         occ_log[~observed_log] = -1
 
-        #static_mask = ((prob > 0.98) & (score > 30.0)) # hit - miss
-        static_mask = (prob_log > 0.65) # log
+        static_mask = ((prob > 0.5)) # & (score > 0.0)) # hit - miss
+        #static_mask = (prob_log > 0.65) # log
         #static_mask = (self.static_score > 30.0) 
-        dynamic_mask = ((prob_log > 0.3) & (prob_log < 0.8)) # log
+        dynamic_mask = ((prob > 0.05) & (prob < 0.1)) # log
 
         # OccupancyGrid
         occ = (prob * 100).astype(np.int8)
         occ[~observed] = -1
 
-        #static_occ = np.full_like(occ_log, -1, dtype=np.int8)
-        static_occ = np.zeros_like(occ_log, dtype=np.int8)
+        #static_occ = np.full_like(occ, -1, dtype=np.int8)
+        static_occ = np.zeros_like(occ, dtype=np.int8)
         #static_occ[prob_log < 0.2] = 0
         static_occ[static_mask] = 100
 
-        #dynamic_occ = np.full_like(occ_log, -1, dtype=np.int8)
-        dynamic_occ = np.zeros_like(occ_log, dtype=np.int8)
+        #dynamic_occ = np.full_like(occ, -1, dtype=np.int8)
+        dynamic_occ = np.zeros_like(occ, dtype=np.int8)
         #dynamic_occ[prob_log < 0.3] = 0
         dynamic_occ[dynamic_mask] = 100
 

@@ -451,7 +451,7 @@ class ObsBayesMap(Node):
 
         middle_points = np.vstack((middle_x, middle_y, middle_z, middle_intensity))
 
-        print("ray",time.perf_counter()-t0)
+        #print("ray",time.perf_counter()-t0)
 
         ############################  reflection ############################
         #ground global
@@ -498,7 +498,7 @@ class ObsBayesMap(Node):
         pcd_high_buff = np.insert(self.pcd_high_buff, len(self.pcd_high_buff[0,:]), high_global.T, axis=1)
         points_high_round = np.round(pcd_high_buff * self.ground_pixel) / self.ground_pixel
         self.pcd_high_buff =points_high_round[:,~pd.DataFrame({"x":points_high_round[0,:], "y":points_high_round[1,:], "z":points_high_round[2,:]}).duplicated()]
-        print("duplicated",time.perf_counter()-t0)
+        #print("duplicated",time.perf_counter()-t0)
         
         # remove dynamic obs
         t3=time.perf_counter()
@@ -542,7 +542,7 @@ class ObsBayesMap(Node):
             # high削除mask
             #high_remove_mask = np.array([(middle_global_x, middle_global_y) in remove_cells for middle_global_x, middle_global_y in zip(high_x, high_y)])
             #self.pcd_high_buff = self.pcd_high_buff[:, ~high_remove_mask]
-        print("remove points",time.perf_counter()-t3)
+        #print("remove points",time.perf_counter()-t3)
         #self.pcd_middle_buff = self.remove_dynamic_points(self.pcd_middle_buff, middle_dynamic_global, radius=0.25)
         #local reflect ground map
         t1=time.perf_counter()
@@ -564,10 +564,18 @@ class ObsBayesMap(Node):
         map_data_middle_set = grid_map_set(self.pcd_middle_buff[1,:], self.pcd_middle_buff[0,:], middle_reflect_conv, position, self.ground_pixel, self.MAP_RANGE)
 
         #local reflect high map
-        high_reflect_conv = self.pcd_high_buff[3,:]/255*100.0
+        #high_reflect_conv = self.pcd_high_buff[3,:]/255*100.0
+        if self.pcd_high_buff.shape[1] > 0:
+            high_max_intensity = np.max(self.pcd_high_buff[3,:])
+            if high_max_intensity > 0:
+                high_reflect_conv = np.clip(self.pcd_high_buff[3,:] / 255 * 100.0, 0, 100).astype(np.int8)
+            else:
+                high_reflect_conv = np.zeros(self.pcd_high_buff.shape[1], dtype=np.int8)
+        else:
+            high_reflect_conv = np.zeros(0, dtype=np.int8)
         map_data_high_set = grid_map_set(self.pcd_high_buff[1,:], self.pcd_high_buff[0,:], high_reflect_conv, position, self.ground_pixel, self.MAP_RANGE)
 
-        print("local_grid", time.perf_counter()-t1)
+        #print("local_grid", time.perf_counter()-t1)
 
         #if self.pcd_high_buff.shape[1] == 0:
         #    map_data_high_set = np.zeros((self.size, self.size), dtype=np.uint8)
@@ -616,10 +624,10 @@ class ObsBayesMap(Node):
         #GL reflect map
         #map_data_gl_set = grid_map_set(self.pcd_ground_buff[1,:], self.pcd_ground_buff[0,:], ground_reflect_conv, position, self.ground_pixel, self.MAP_RANGE_GL)
         t2=time.perf_counter()
-        map_data_ground_gl_set = grid_map_set(ekf_ground_set[1,:], ekf_ground_set[0,:], ground_reflect_conv, ekf_position, self.ground_pixel, self.MAP_RANGE_GL)
-        map_data_middle_gl_set = grid_map_set(ekf_middle_set[1,:], ekf_middle_set[0,:], middle_reflect_conv, ekf_position, self.ground_pixel, self.MAP_RANGE_GL)
-        map_data_high_gl_set = grid_map_set(ekf_high_set[1,:], ekf_high_set[0,:], high_reflect_conv, ekf_position, self.ground_pixel, self.MAP_RANGE_GL)
-        print("global_grid", time.perf_counter()-t2)
+        #map_data_ground_gl_set = grid_map_set(ekf_ground_set[1,:], ekf_ground_set[0,:], ground_reflect_conv, ekf_position, self.ground_pixel, self.MAP_RANGE_GL)
+        #map_data_middle_gl_set = grid_map_set(ekf_middle_set[1,:], ekf_middle_set[0,:], middle_reflect_conv, ekf_position, self.ground_pixel, self.MAP_RANGE_GL)
+        #map_data_high_gl_set = grid_map_set(ekf_high_set[1,:], ekf_high_set[0,:], high_reflect_conv, ekf_position, self.ground_pixel, self.MAP_RANGE_GL)
+        #print("global_grid", time.perf_counter()-t2)
         #print("total", time.perf_counter()-t0)
 
         #if self.pcd_high_buff.shape[1] == 0:
@@ -633,6 +641,8 @@ class ObsBayesMap(Node):
         #global ground
         ground_global_msg = point_cloud_intensity_msg(self.pcd_ground_buff.T, t_stamp, 'odom')
         self.pcd_ground_global_publisher.publish(ground_global_msg) 
+        t4=time.perf_counter()
+        '''
         #local map ground
         self.map_data_ground = make_map_msg(map_data_ground_set, self.ground_pixel, position, map_orientation, t_stamp, self.MAP_RANGE, "odom")
         #local map middle
@@ -648,6 +658,8 @@ class ObsBayesMap(Node):
         self.map_data_middle_gl = make_map_msg(map_data_middle_gl_set, self.ground_pixel, ekf_position, map_orientation, t_stamp, self.MAP_RANGE_GL, "odom")
         #gl map high
         self.map_data_high_gl = make_map_msg(map_data_high_gl_set, self.ground_pixel, ekf_position, map_orientation, t_stamp, self.MAP_RANGE_GL, "odom")
+        '''
+        #print("make_map_msg", time.perf_counter()-t4)
         #self.reflect_map_global_publisher.publish(self.map_data_gl) 
         self.map_data_gl_flag = 1
         rgb_local = self.make_rgb_map(map_data_ground_set, map_data_middle_set, map_data_high_set)
@@ -655,11 +667,12 @@ class ObsBayesMap(Node):
         rgb_local_msg.header.stamp = t_stamp
         rgb_local_msg.header.frame_id = "odom"
         self.rgb_map_local_pub.publish(rgb_local_msg)
-        rgb_global = self.make_rgb_map(map_data_ground_gl_set, map_data_middle_gl_set, map_data_high_gl_set)
-        rgb_global_msg = self.bridge.cv2_to_imgmsg(rgb_global, encoding='bgr8')
-        rgb_global_msg.header.stamp = t_stamp
-        rgb_global_msg.header.frame_id = "odom"
-        self.rgb_map_global_pub.publish(rgb_global_msg)
+        #rgb_global = self.make_rgb_map(map_data_ground_gl_set, map_data_middle_gl_set, map_data_high_gl_set)
+        #rgb_global_msg = self.bridge.cv2_to_imgmsg(rgb_global, encoding='bgr8')
+        #rgb_global_msg.header.stamp = t_stamp
+        #rgb_global_msg.header.frame_id = "odom"
+        #self.rgb_map_global_pub.publish(rgb_global_msg)
+        #print("total", time.perf_counter()-t0)
         
         if self.MAKE_GL_MAP_FLAG == 1:
             map_pos_diff = math.sqrt((ekf_position_x - self.map_position_x_buff)**2 + (ekf_position_y - self.map_position_y_buff)**2)
@@ -683,11 +696,11 @@ class ObsBayesMap(Node):
                 self.map_theta_z_buff = ekf_theta_z
                 self.map_number += 1
         
-        remove_vis = np.zeros((self.size,self.size), dtype=np.int8)
+        #remove_vis = np.zeros((self.size,self.size), dtype=np.int8)
         #remove_vis[gx[remove_mask], gy[remove_mask]] = 100
-        remove_vis[dynamic_occ > 0] = 20
-        remove_vis[middle_global_x[remove_middle_mask], middle_global_y[remove_middle_mask]] = 100
-        
+        #remove_vis[dynamic_occ > 0] = 20
+        #remove_vis[middle_global_x[remove_middle_mask], middle_global_y[remove_middle_mask]] = 100
+        '''
         # Publish
         grid = OccupancyGrid()
         grid.header = middle_msg.header
@@ -722,7 +735,7 @@ class ObsBayesMap(Node):
         remove_grid.info = grid.info
         remove_grid.data = remove_vis.flatten().tolist()
         self.remove_map_pub.publish(remove_grid)
-        
+        '''
         # Update previous pose
         self.prev_x = self.position_x
         self.prev_y = self.position_y

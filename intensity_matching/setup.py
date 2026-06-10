@@ -30,6 +30,7 @@ setup(
         'png_map_matching = intensity_matching.png_map_matching:main',
         'reflection_intensity_localmap_multi_sub = intensity_matching.reflection_intensity_localmap_multi_sub:main',
         'reflection_intensity_globalmap_multi_sub = intensity_matching.reflection_intensity_globalmap_multi_sub:main',
+        'scoremap = intensity_matching.scoremap:main',
         ],
     },
 )

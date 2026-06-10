@@ -126,7 +126,7 @@ class WaypointManagerMaprun(Node):
         self.last_ekf_match_x = 0.0
         self.last_ekf_match_y = 0.0
 
-        self.match_per_threshold = 0.3 # use fusion match percentage 0.6 ground / rgb 0,35
+        self.match_per_threshold = 0.2 # use fusion match percentage 0.6 ground / rgb 0,35
         
         #image angle
         self.angle_offset = 0
@@ -167,7 +167,7 @@ class WaypointManagerMaprun(Node):
         self.start_position_init_y = 0.0#4.2 #[m]
 
         map_base_name = "waypoint_map_rgb"
-        folder_path = os.path.expanduser('~/ros2_ws/src/map/nakaniwa_manual_25m')
+        folder_path = os.path.expanduser('~/ros2_ws/src/map/nakaniwa_manual')
 
         # pngファイルを探索
         png_files = glob.glob(os.path.join(folder_path, '*.png'))
@@ -790,10 +790,16 @@ class WaypointManagerMaprun(Node):
         return ground, mid, high
 
     def preprocess_layer(self, img):
-        img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX)
-        img = img.astype(np.uint8)
+        #img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX)
+        #img = img.astype(np.uint8)
         # ノイズ除去
-        img = cv2.GaussianBlur(img, (5,5), 0)
+        img = img.astype(np.uint8)
+
+        kernel = np.ones((3,3), np.uint8)
+        img = cv2.dilate(img, kernel, iterations=1)
+
+        img = cv2.GaussianBlur(img, (15,15), 0)
+        #img = cv2.GaussianBlur(img, (5,5), 0)
         return img
 
     def calc_entropy_score(self, img):
@@ -958,7 +964,7 @@ class WaypointManagerMaprun(Node):
 
             dynamic_limit = max(1.0, self.Speed * 3.0)
 
-            if dist > 1.0: # 1.0 / dynamic_limit
+            if dist > 1.5: # 1.0 / dynamic_limit
                 continue
 
             cand["total_score"] = total_score

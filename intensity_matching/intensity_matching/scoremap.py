@@ -250,6 +250,7 @@ class WaypointManagerMaprun(Node):
         self.action_sent = False  # アクションが送信されたかを追跡
         self.stop = False # stopするかの変数(True=stop, False=go)
         self.is_initialized = False
+        self.score_map_count = 0
 
     def get_local_height_map(self, msg):
         t_stamp = msg.header.stamp
@@ -950,7 +951,7 @@ class WaypointManagerMaprun(Node):
             w_ground * res_ground +
             w_mid    * res_mid +
             w_high   * res_high
-        )
+        )        
 
         candidates = []
 
@@ -993,8 +994,49 @@ class WaypointManagerMaprun(Node):
                 -1,
                 thickness=-1
             )
+        
+        count = self.score_map_count
+
+        self.save_score_map(
+            res_ground,
+            f"/home/ubuntu/score_map/ground_{count:05d}.png"
+        )
+
+        self.save_score_map(
+            res_mid,
+            f"/home/ubuntu/score_map/mid_{count:05d}.png"
+        )
+
+        self.save_score_map(
+            res_high,
+            f"/home/ubuntu/score_map/high_{count:05d}.png"
+        )
+
+        self.save_score_map(
+            result,
+            f"/home/ubuntu/score_map/fusion_{count:05d}.png"
+        )
+
+        self.score_map_count += 1
 
         return candidates
+    
+    def save_score_map(self, score_map, filename):
+
+        img = cv2.normalize(
+            score_map,
+            None,
+            0,
+            255,
+            cv2.NORM_MINMAX
+        ).astype(np.uint8)
+
+        heatmap = cv2.applyColorMap(
+            img,
+            cv2.COLORMAP_JET
+        )
+
+        cv2.imwrite(filename, heatmap)
 
     def verify_candidates_multi_layer(
         self,

@@ -87,7 +87,7 @@ class ObsBayesMap(Node):
         self.bin_count = 720
         #ground 
         self.ground_pixel = self.grid_pixel
-        self.MAP_RANGE_GL = 25.0 #[m]
+        self.MAP_RANGE_GL = 20.0 #[m]
         self.MAP_LIM_X_MIN = -25.0 #[m]
         self.MAP_LIM_X_MAX =  25.0 #[m]
         self.MAP_LIM_Y_MIN = -25.0 #[m]
@@ -138,7 +138,7 @@ class ObsBayesMap(Node):
         self.map_data_gl = 0
         self.map_data_gl_flag = 0
         self.MAKE_GL_MAP_FLAG = 1 # make map
-        self.save_dir = os.path.expanduser('~/ros2_ws/src/map/tsukuba_manual_25m')
+        self.save_dir = os.path.expanduser('~/ros2_ws/src/map/tsukuba_full_nolidar2')
         yaml.add_representer(OrderedDict, ordered_dict_representer, Dumper=MyDumper)
         yaml.add_representer(list, list_representer, Dumper=MyDumper)
 
@@ -564,7 +564,15 @@ class ObsBayesMap(Node):
         #map_data_middle_set = grid_map_set(self.pcd_middle_buff[1,:], self.pcd_middle_buff[0,:], middle_reflect_conv, position, self.ground_pixel, self.MAP_RANGE)
 
         #local reflect high map
-        high_reflect_conv = self.pcd_high_buff[3,:]/255*100.0
+        if self.pcd_high_buff.shape[1] > 0:
+            high_max_intensity = np.max(self.pcd_high_buff[3,:])
+            if high_max_intensity > 0:
+                high_reflect_conv = np.clip(self.pcd_high_buff[3,:] / 255 * 100.0, 0, 100).astype(np.int8)
+            else:
+                high_reflect_conv = np.zeros(self.pcd_high_buff.shape[1], dtype=np.int8)
+        else:
+            high_reflect_conv = np.zeros(0, dtype=np.int8)
+        #high_reflect_conv = self.pcd_high_buff[3,:]/255*100.0
         #map_data_high_set = grid_map_set(self.pcd_high_buff[1,:], self.pcd_high_buff[0,:], high_reflect_conv, position, self.ground_pixel, self.MAP_RANGE)
 
         #print("local_grid", time.perf_counter()-t1)

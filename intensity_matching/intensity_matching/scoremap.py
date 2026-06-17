@@ -167,7 +167,7 @@ class WaypointManagerMaprun(Node):
         self.start_position_init_y = 0.0#4.2 #[m]
 
         map_base_name = "waypoint_map_rgb"
-        folder_path = os.path.expanduser('~/ros2_ws/src/map/nakaniwa_manual')
+        folder_path = os.path.expanduser('~/ros2_ws/src/map/kitakan')
 
         # pngファイルを探索
         png_files = glob.glob(os.path.join(folder_path, '*.png'))

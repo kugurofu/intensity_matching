@@ -61,7 +61,7 @@ class WaypointManagerMaprun(Node):
         # Subscriptionを作成。
         self.subscription = self.create_subscription(nav_msgs.Odometry,'/odom/combine', self.get_odom, qos_profile_sub)
         #self.subscription = self.create_subscription(nav_msgs.Odometry,'/odom_fast', self.get_odom, qos_profile_sub)
-        self.subscription = self.create_subscription(nav_msgs.Odometry,'/odom/combine', self.get_ekf_odom, qos_profile_sub)
+        self.subscription = self.create_subscription(nav_msgs.Odometry,'/fusion/odom', self.get_ekf_odom, qos_profile_sub)
         self.subscription = self.create_subscription(Image,'/rgb_reflect_map_local', self.get_local_height_map, qos_profile_sub)
         self.bridge = CvBridge()
         #self.subscription = self.create_subscription(Image,'/local_height_map',self.get_local_height_map,qos_profile_sub)
@@ -167,7 +167,7 @@ class WaypointManagerMaprun(Node):
         self.start_position_init_y = 0.0#4.2 #[m]
 
         map_base_name = "waypoint_map_rgb"
-        folder_path = os.path.expanduser('~/ros2_ws/src/map/nakaniwa_manual')
+        folder_path = os.path.expanduser('~/ros2_ws/src/map/nakaniwa')
 
         # pngファイルを探索
         png_files = glob.glob(os.path.join(folder_path, '*.png'))
@@ -306,7 +306,7 @@ class WaypointManagerMaprun(Node):
         # ==========================================================
         # coarse matching (without rotation)
         # ==========================================================
-        '''
+        
         coarse_result = cv2.matchTemplate(global_ground.astype(np.uint8), local_ground_raw.astype(np.uint8), cv2.TM_CCOEFF_NORMED) # ground main
         #coarse_result = cv2.matchTemplate(global_rgb.astype(np.uint8), reflect_map_local_raw.astype(np.uint8), cv2.TM_CCOEFF_NORMED) # rgb main
         _, coarse_max_val, _, coarse_max_loc = cv2.minMaxLoc(coarse_result)
@@ -325,15 +325,15 @@ class WaypointManagerMaprun(Node):
         if (global_crop.shape[0] != h or global_crop.shape[1] != w):
             #print("global_crop size mismatch")
             return
-        '''
+        
 
         # ==========================================================
         # angle estimation using cropped map
         # ==========================================================
         #best_angle, best_score = self.find_best_rotation_angle(local_ground_raw, global_ground_crop, angle_range=10, step=0.5)
-        #best_angle, dx, dy, best_score = self.estimate_affine_ecc(local_ground_raw, global_ground_crop) # ground main
+        best_angle, dx, dy, best_score = self.estimate_affine_ecc(local_ground_raw, global_ground_crop) # ground main
         #best_angle, dx, dy, best_score = self.estimate_affine_ecc(reflect_map_local_raw, global_crop) # rgb main
-        best_angle = 0 # test
+        #best_angle = 0 # test
         self.angle_offset = best_angle
         #print(f"best_angle = {best_angle}")
         #print(f"best_score = {best_score}")
@@ -380,8 +380,8 @@ class WaypointManagerMaprun(Node):
         if best_candidate is not None:
             ref_slam_x = best_candidate["x"]
             ref_slam_y = best_candidate["y"]
-            #ref_slam_x += dx / map_ground_pixel # ECC
-            #ref_slam_y -= dy / map_ground_pixel # ECC
+            ref_slam_x += dx / map_ground_pixel # ECC
+            ref_slam_y -= dy / map_ground_pixel # ECC
             ref_slam_xyz = np.array([ref_slam_x, ref_slam_y, 0.0])
             match_percentage = best_candidate["score"] # score / total_score
         else:
@@ -425,6 +425,16 @@ class WaypointManagerMaprun(Node):
     
     def calc_occupancy_ratio(self, img, threshold=20):
         return np.count_nonzero(img > threshold) / img.size
+    
+    def calc_peak_ratio(self, score_map):
+
+        max_val = np.max(score_map)
+        mean_val = np.mean(score_map)
+
+        peak_ratio = max_val / (mean_val + 1e-6)
+        peak_score = max_val - mean_val
+
+        return peak_score
         
         # サーバーにアクションを送信する関数
     def send_action_request(self):
@@ -882,44 +892,7 @@ class WaypointManagerMaprun(Node):
             local_map_range,
             position_map,
             top_k=5):
-
-        # --------------------------
-        # occupancy
-        # --------------------------
-
-        occ_ground = self.calc_occupancy_ratio(local_ground)
-        occ_mid    = self.calc_occupancy_ratio(local_mid)
-        occ_high   = self.calc_occupancy_ratio(local_high)
-
-        if occ_mid < 0.01:
-            occ_mid = 0
-
-        if occ_high < 0.01:
-            occ_high = 0
-
-        weight_sum = occ_ground + occ_mid + occ_high
-
-        if weight_sum < 1e-6:
-            weight_sum = 1.0
-
-        w_ground = occ_ground / weight_sum
-        w_mid    = occ_mid / weight_sum
-        w_high   = occ_high / weight_sum
-
-        print(
-            f"occ = "
-            f"{occ_ground:.3f}, "
-            f"{occ_mid:.3f}, "
-            f"{occ_high:.3f}"
-        )
-
-        print(
-            f"weight = "
-            f"{w_ground:.3f}, "
-            f"{w_mid:.3f}, "
-            f"{w_high:.3f}"
-        )
-
+        
         # --------------------------
         # layer matching
         # --------------------------
@@ -940,6 +913,80 @@ class WaypointManagerMaprun(Node):
             global_high,
             local_high,
             cv2.TM_CCORR_NORMED
+        )
+
+        peak_ground = self.calc_peak_ratio(res_ground)
+        peak_mid    = self.calc_peak_ratio(res_mid)
+        peak_high   = self.calc_peak_ratio(res_high)
+        _, max_ground, _, loc_ground = cv2.minMaxLoc(res_ground)
+        _, max_mid,    _, loc_mid    = cv2.minMaxLoc(res_mid)
+        _, max_high,   _, loc_high   = cv2.minMaxLoc(res_high)
+
+        psr_ground = self.calc_psr(
+            res_ground,
+            loc_ground
+        )
+
+        psr_mid = self.calc_psr(
+            res_mid,
+            loc_mid
+        )
+
+        psr_high = self.calc_psr(
+            res_high,
+            loc_high
+        )
+
+        # --------------------------
+        # occupancy
+        # --------------------------
+
+        occ_ground = self.calc_occupancy_ratio(local_ground)
+        occ_mid    = self.calc_occupancy_ratio(local_mid)
+        occ_high   = self.calc_occupancy_ratio(local_high)
+
+        if occ_mid < 0.01:
+            occ_mid = 0
+
+        if occ_high < 0.01:
+            occ_high = 0
+
+        #score_ground = occ_ground * peak_ground
+        #score_mid    = occ_mid    * peak_mid
+        #score_high   = occ_high   * peak_high
+        score_ground = psr_ground
+        score_mid    = psr_mid
+        score_high   = psr_high
+
+        #weight_sum = occ_ground + occ_mid + occ_high
+        weight_sum = score_ground + score_mid + score_high
+
+        if weight_sum < 1e-6:
+            weight_sum = 1.0
+
+        w_ground = score_ground / weight_sum
+        w_mid    = score_mid / weight_sum
+        w_high   = score_high / weight_sum
+
+        print(
+            f"occ = "
+            f"{occ_ground:.3f}, "
+            f"{occ_mid:.3f}, "
+            f"{occ_high:.3f}"
+        )
+
+        print(
+            f"score peak = "
+            f"{score_ground:.3f}, "
+            f"{score_mid:.3f}, "
+            f"{score_high:.3f}"
+        )
+
+        print(
+            f"weight = "
+            f"{w_ground:.3f}, "
+            f"{w_mid:.3f}, "
+            f"{w_high:.3f}"
         )
 
         # --------------------------
@@ -995,6 +1042,36 @@ class WaypointManagerMaprun(Node):
             )
 
         return candidates
+    def calc_psr(self, score_map, peak_loc, exclusion_radius=15):
+
+        h, w = score_map.shape
+
+        mask = np.ones_like(score_map, dtype=np.uint8)
+
+        cv2.circle(
+            mask,
+            peak_loc,
+            exclusion_radius,
+            0,
+            thickness=-1
+        )
+
+        sidelobe = score_map[mask > 0]
+
+        if len(sidelobe) < 10:
+            return 0.0
+
+        mean_side = np.mean(sidelobe)
+        std_side  = np.std(sidelobe)
+
+        if std_side < 1e-6:
+            return 0.0
+
+        peak = score_map[peak_loc[1], peak_loc[0]]
+
+        psr = (peak - mean_side) / std_side
+
+        return psr
 
     def verify_candidates_multi_layer(
         self,

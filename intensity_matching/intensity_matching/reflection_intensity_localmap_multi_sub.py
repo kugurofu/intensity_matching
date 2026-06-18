@@ -16,6 +16,7 @@ from tf2_ros import Buffer
 from tf2_ros import TransformListener
 from tf2_ros import TransformException
 from rclpy.executors import MultiThreadedExecutor
+from tf2_sensor_msgs.tf2_sensor_msgs import do_transform_cloud
 # Python
 import numpy as np
 import math
@@ -51,7 +52,7 @@ class ObsBayesMap(Node):
             depth = 1
         )
         # Subscriber
-        self.local_odom_sub = self.create_subscription(nav_msgs.Odometry,'/odom/combine',self.get_local_odom, qos_profile_sub)
+        self.local_odom_sub = self.create_subscription(nav_msgs.Odometry,'/fusion/odom',self.get_local_odom, qos_profile_sub)
         self.global_odom_sub = self.create_subscription(nav_msgs.Odometry,'/fusion/odom', self.get_global_odom, qos_profile_sub)
         self.pcd_ground_sub = message_filters.Subscriber(self, sensor_msgs.PointCloud2, '/pcd_segment_ground')
         self.pcd_middle_sub = message_filters.Subscriber(self, sensor_msgs.PointCloud2, '/pcd_segment_middle')
@@ -245,7 +246,7 @@ class ObsBayesMap(Node):
         try:
             transform = self.tf_buffer.lookup_transform(
                 "odom",
-                "base_link",
+                "livox_frame",
                 rclpy.time.Time.from_msg(
                     ground_msg.header.stamp
                 )# ground_msg.header.stamp
@@ -255,7 +256,7 @@ class ObsBayesMap(Node):
             self.get_logger().warn(
                 f"TF lookup failed: {ex}"
             )
-            return
+            return        
         
         # ground_points
         ground_x, ground_y, ground_z, ground_intensity = self.pointcloud2_to_array(ground_msg)
@@ -511,21 +512,84 @@ class ObsBayesMap(Node):
         ############################  reflection ############################
         #ground global
         ground_rot, ground_rot_matrix = rotation_xyz(ground_points[[0,1,2],:], theta_x, theta_y, theta_z)
-        ground_x_global = ground_rot[0,:] + position_x
-        ground_y_global = ground_rot[1,:] + position_y
-        ground_global = np.vstack((ground_x_global, ground_y_global, ground_rot[2,:], ground_points[3,:]) , dtype=np.float32)
+        #ground_x_global = ground_rot[0,:] + position[0]
+        #ground_y_global = ground_rot[1,:] + position[1]
+        #ground_global = np.vstack((ground_x_global, ground_y_global, ground_rot[2,:], ground_points[3,:]) , dtype=np.float32)
+        ground_global_msg = do_transform_cloud(
+            ground_msg,
+            transform
+        )
+
+        ground_x_global, \
+        ground_y_global, \
+        ground_z_global, \
+        ground_intensity_global = self.pointcloud2_to_array(
+            ground_global_msg
+        )
+
+        ground_global = np.vstack(
+            (
+                ground_x_global,
+                ground_y_global,
+                ground_z_global,
+                ground_intensity_global
+            ),
+            dtype=np.float32
+        )
         
         #middle global
         middle_rot, middle_rot_matrix = rotation_xyz(middle_points[[0,1,2],:], theta_x, theta_y, theta_z)
-        middle_x_global = middle_rot[0,:] + position_x
-        middle_y_global = middle_rot[1,:] + position_y
-        middle_global = np.vstack((middle_x_global, middle_y_global, middle_rot[2,:], middle_points[3,:]) , dtype=np.float32)
+        #middle_x_global = middle_rot[0,:] + position_x
+        #middle_y_global = middle_rot[1,:] + position_y
+        #middle_global = np.vstack((middle_x_global, middle_y_global, middle_rot[2,:], middle_points[3,:]) , dtype=np.float32)
+        middle_global_msg = do_transform_cloud(
+            middle_msg,
+            transform
+        )
+
+        middle_x_global, \
+        middle_y_global, \
+        middle_z_global, \
+        middle_intensity_global = self.pointcloud2_to_array(
+            middle_global_msg
+        )
+
+        middle_global = np.vstack(
+            (
+                middle_x_global,
+                middle_y_global,
+                middle_z_global,
+                middle_intensity_global
+            ),
+            dtype=np.float32
+        )
         
         #high global
         high_rot, high_rot_matrix = rotation_xyz(high_points[[0,1,2],:], theta_x, theta_y, theta_z)
-        high_x_grobal = high_rot[0,:] + position_x
-        high_y_grobal = high_rot[1,:] + position_y
-        high_global = np.vstack((high_x_grobal, high_y_grobal, high_rot[2,:], high_points[3,:]) , dtype=np.float32)
+        #high_x_grobal = high_rot[0,:] + position_x
+        #high_y_grobal = high_rot[1,:] + position_y
+        #high_global = np.vstack((high_x_grobal, high_y_grobal, high_rot[2,:], high_points[3,:]) , dtype=np.float32)
+        high_global_msg = do_transform_cloud(
+            high_msg,
+            transform
+        )
+
+        high_x_global, \
+        high_y_global, \
+        high_z_global, \
+        high_intensity_global = self.pointcloud2_to_array(
+            high_global_msg
+        )
+
+        high_global = np.vstack(
+            (
+                high_x_global,
+                high_y_global,
+                high_z_global,
+                high_intensity_global
+            ),
+            dtype=np.float32
+        )
 
         #map lim set
         map_lim_x_min = position_x + self.MAP_LIM_X_MIN;
@@ -604,10 +668,10 @@ class ObsBayesMap(Node):
         remove_middle_mask = np.zeros(len(middle_global_x), dtype=bool)
         remove_middle_mask[middle_valid] = (dynamic_occ[middle_global_x[middle_valid], middle_global_y[middle_valid]] > 0)
         removed_middle_points = self.pcd_middle_buff[:, remove_middle_mask]
-        remove_high_mask = np.zeros(len(high_global_x), dtype=bool)
-        remove_high_mask[high_valid] = (dynamic_occ[high_global_x[high_valid], high_global_y[high_valid]] > 0)
+        #remove_high_mask = np.zeros(len(high_global_x), dtype=bool)
+        #remove_high_mask[high_valid] = (dynamic_occ[high_global_x[high_valid], high_global_y[high_valid]] > 0)
         self.pcd_middle_buff = self.pcd_middle_buff[:, ~remove_middle_mask]
-        self.pcd_high_buff = self.pcd_high_buff[:, ~remove_high_mask]
+        #self.pcd_high_buff = self.pcd_high_buff[:, ~remove_high_mask]
         
         if removed_middle_points.shape[1] > 0:
             # removeされたmiddle点をgrid化

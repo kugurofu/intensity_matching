@@ -19,12 +19,14 @@ from nav_msgs.msg import OccupancyGrid
 from cv_bridge import CvBridge
 import transforms3d
 from geometry_msgs.msg import Quaternion
+from geometry_msgs.msg import TransformStamped
 from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 from rclpy.time import Time
 from rclpy.action import ActionClient
 from my_msgs.action import StopFlag  # Actionメッセージのインポート
 from sensor_msgs.msg import Image
+import tf2_ros
 
 # C++と同じく、Node型を継承します。
 class WaypointManagerMaprun(Node):
@@ -131,6 +133,9 @@ class WaypointManagerMaprun(Node):
         #image angle
         self.angle_offset = 0
         
+        # tf
+        self.t = TransformStamped()
+        self.ekf_publish_TF = True
         ## ekf
         self.GTheta = None
         self.GTheta0 = None
@@ -167,7 +172,7 @@ class WaypointManagerMaprun(Node):
         self.start_position_init_y = 0.0#4.2 #[m]
 
         map_base_name = "waypoint_map_rgb"
-        folder_path = os.path.expanduser('~/ros2_ws/src/map/nakaniwa_manual')
+        folder_path = os.path.expanduser('~/ros2_ws/src/map/nakaniwa')
 
         # pngファイルを探索
         png_files = glob.glob(os.path.join(folder_path, '*.png'))
@@ -252,6 +257,11 @@ class WaypointManagerMaprun(Node):
         self.is_initialized = False
         self.score_map_count = 0
 
+    def reset_tf_buffer(self): 
+        # キャッシュのクリアとして、Bufferのインスタンスを再作成 
+        self.br = tf2_ros.TransformBroadcaster(self) 
+        self.get_logger().info('TransformBroadcaster has been reset')
+
     def get_local_height_map(self, msg):
         t_stamp = msg.header.stamp
         reflect_map_local_raw = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
@@ -307,7 +317,7 @@ class WaypointManagerMaprun(Node):
         # ==========================================================
         # coarse matching (without rotation)
         # ==========================================================
-        '''
+        
         coarse_result = cv2.matchTemplate(global_ground.astype(np.uint8), local_ground_raw.astype(np.uint8), cv2.TM_CCOEFF_NORMED) # ground main
         #coarse_result = cv2.matchTemplate(global_rgb.astype(np.uint8), reflect_map_local_raw.astype(np.uint8), cv2.TM_CCOEFF_NORMED) # rgb main
         _, coarse_max_val, _, coarse_max_loc = cv2.minMaxLoc(coarse_result)
@@ -326,15 +336,15 @@ class WaypointManagerMaprun(Node):
         if (global_crop.shape[0] != h or global_crop.shape[1] != w):
             #print("global_crop size mismatch")
             return
-        '''
+        
 
         # ==========================================================
         # angle estimation using cropped map
         # ==========================================================
-        #best_angle, best_score = self.find_best_rotation_angle(local_ground_raw, global_ground_crop, angle_range=10, step=0.5)
+        best_angle, best_score = self.find_best_rotation_angle(local_ground_raw, global_ground_crop, angle_range=10, step=0.5)
         #best_angle, dx, dy, best_score = self.estimate_affine_ecc(local_ground_raw, global_ground_crop) # ground main
         #best_angle, dx, dy, best_score = self.estimate_affine_ecc(reflect_map_local_raw, global_crop) # rgb main
-        best_angle = 0 # test
+        #best_angle = 0 # test
         self.angle_offset = best_angle
         #print(f"best_angle = {best_angle}")
         #print(f"best_score = {best_score}")
@@ -426,6 +436,16 @@ class WaypointManagerMaprun(Node):
     
     def calc_occupancy_ratio(self, img, threshold=20):
         return np.count_nonzero(img > threshold) / img.size
+
+    def calc_peak_ratio(self, score_map):
+
+        max_val = np.max(score_map)
+        mean_val = np.mean(score_map)
+
+        peak_ratio = max_val / (mean_val + 1e-6)
+        peak_score = max_val - mean_val
+
+        return peak_score
         
         # サーバーにアクションを送信する関数
     def send_action_request(self):
@@ -792,6 +812,18 @@ class WaypointManagerMaprun(Node):
                 self.fused_msg.header.stamp = self.get_clock().now().to_msg()
                 self.fused_msg.header.frame_id = "odom"
                 self.fused_pub.publish(self.fused_msg)
+                if self.ekf_publish_TF:
+                    self.t.header.stamp = self.get_clock().now().to_msg()
+                    self.t.header.frame_id = "odom"
+                    self.t.child_frame_id = "base_footprint"
+                    self.t.transform.translation.x = float(fused_value[0])
+                    self.t.transform.translation.y = float(fused_value[1])
+                    self.t.transform.translation.z = 0.0
+                    self.t.transform.rotation.x = 0.0
+                    self.t.transform.rotation.y = 0.0
+                    self.t.transform.rotation.z = float(self.robot_orientationz)
+                    self.t.transform.rotation.w = float(self.robot_orientationw)
+                    self.br.sendTransform(self.t)
                 #print(f"fused_value: {fused_value}")
         #print("publish_fused_value called")
         #print(f"GpsXY = {self.GpsXY}")
@@ -883,43 +915,7 @@ class WaypointManagerMaprun(Node):
             local_map_range,
             position_map,
             top_k=5):
-
-        # --------------------------
-        # occupancy
-        # --------------------------
-
-        occ_ground = self.calc_occupancy_ratio(local_ground)
-        occ_mid    = self.calc_occupancy_ratio(local_mid)
-        occ_high   = self.calc_occupancy_ratio(local_high)
-
-        if occ_mid < 0.01:
-            occ_mid = 0
-
-        if occ_high < 0.01:
-            occ_high = 0
-
-        weight_sum = occ_ground + occ_mid + occ_high
-
-        if weight_sum < 1e-6:
-            weight_sum = 1.0
-
-        w_ground = occ_ground / weight_sum
-        w_mid    = occ_mid / weight_sum
-        w_high   = occ_high / weight_sum
-
-        print(
-            f"occ = "
-            f"{occ_ground:.3f}, "
-            f"{occ_mid:.3f}, "
-            f"{occ_high:.3f}"
-        )
-
-        print(
-            f"weight = "
-            f"{w_ground:.3f}, "
-            f"{w_mid:.3f}, "
-            f"{w_high:.3f}"
-        )
+        
 
         # --------------------------
         # layer matching
@@ -941,6 +937,96 @@ class WaypointManagerMaprun(Node):
             global_high,
             local_high,
             cv2.TM_CCORR_NORMED
+        )
+
+        peak_ground = self.calc_peak_ratio(res_ground)
+        peak_mid    = self.calc_peak_ratio(res_mid)
+        peak_high   = self.calc_peak_ratio(res_high)
+        _, max_ground, _, loc_ground = cv2.minMaxLoc(res_ground)
+        _, max_mid,    _, loc_mid    = cv2.minMaxLoc(res_mid)
+        _, max_high,   _, loc_high   = cv2.minMaxLoc(res_high)
+
+        psr_ground = self.calc_psr(
+            res_ground,
+            loc_ground
+        )
+
+        psr_mid = self.calc_psr(
+            res_mid,
+            loc_mid
+        )
+
+        psr_high = self.calc_psr(
+            res_high,
+            loc_high
+        )
+
+        # --------------------------
+        # occupancy
+        # --------------------------
+
+        occ_ground = self.calc_occupancy_ratio(local_ground)
+        occ_mid    = self.calc_occupancy_ratio(local_mid)
+        occ_high   = self.calc_occupancy_ratio(local_high)
+
+        if occ_mid < 0.03:
+            occ_mid = 0
+
+        if occ_high < 0.03:
+            occ_high = 0
+
+        if occ_ground > 0.04:
+            rel_mid  = occ_mid  / (occ_ground + 1e-6)
+            rel_high = occ_high / (occ_ground + 1e-6)
+        else:
+            rel_mid  = occ_mid
+            rel_high = occ_high
+        confidence_mid  = min(1.0, rel_mid  / 0.3)
+        confidence_high = min(1.0, rel_high / 0.3)
+
+        score_mid  = psr_mid  * confidence_mid
+        score_high = psr_high * confidence_high
+        score_ground = psr_ground
+
+        #score_ground = occ_ground * peak_ground
+        #score_mid    = occ_mid    * peak_mid
+        #score_high   = occ_high   * peak_high
+        #score_ground = psr_ground
+        #score_mid    = psr_mid
+        #score_high   = psr_high
+
+        #weight_sum = occ_ground + occ_mid + occ_high
+        weight_sum = score_ground + score_mid + score_high
+
+        if weight_sum < 1e-6:
+            weight_sum = 1.0
+
+        w_ground = score_ground / weight_sum
+        w_mid    = score_mid / weight_sum
+        w_high   = score_high / weight_sum
+        #w_ground = occ_ground / weight_sum
+        #w_mid    = occ_mid / weight_sum
+        #w_high   = occ_high / weight_sum
+
+        print(
+            f"occ = "
+            f"{occ_ground:.3f}, "
+            f"{occ_mid:.3f}, "
+            f"{occ_high:.3f}"
+        )
+
+        print(
+            f"score peak = "
+            f"{score_ground:.3f}, "
+            f"{score_mid:.3f}, "
+            f"{score_high:.3f}"
+        )
+
+        print(
+            f"weight = "
+            f"{w_ground:.3f}, "
+            f"{w_mid:.3f}, "
+            f"{w_high:.3f}"
         )
 
         # --------------------------
@@ -1037,6 +1123,37 @@ class WaypointManagerMaprun(Node):
         )
 
         cv2.imwrite(filename, heatmap)
+    
+    def calc_psr(self, score_map, peak_loc, exclusion_radius=15):
+
+        h, w = score_map.shape
+
+        mask = np.ones_like(score_map, dtype=np.uint8)
+
+        cv2.circle(
+            mask,
+            peak_loc,
+            exclusion_radius,
+            0,
+            thickness=-1
+        )
+
+        sidelobe = score_map[mask > 0]
+
+        if len(sidelobe) < 10:
+            return 0.0
+
+        mean_side = np.mean(sidelobe)
+        std_side  = np.std(sidelobe)
+
+        if std_side < 1e-6:
+            return 0.0
+
+        peak = score_map[peak_loc[1], peak_loc[0]]
+
+        psr = (peak - mean_side) / std_side
+
+        return psr
 
     def verify_candidates_multi_layer(
         self,
@@ -1249,6 +1366,7 @@ def main(args=None):
     rclpy.init(args=args)
     # クラスのインスタンスを作成
     waypoint_manager_maprun = WaypointManagerMaprun()
+    waypoint_manager_maprun.reset_tf_buffer()
     # spin処理を実行、spinをしていないとROS 2のノードはデータを入出力することが出来ません。
     rclpy.spin(waypoint_manager_maprun)
     # 明示的にノードの終了処理を行います。

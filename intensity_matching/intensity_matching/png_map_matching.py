@@ -19,12 +19,14 @@ from nav_msgs.msg import OccupancyGrid
 from cv_bridge import CvBridge
 import transforms3d
 from geometry_msgs.msg import Quaternion
+from geometry_msgs.msg import TransformStamped
 from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 from rclpy.time import Time
 from rclpy.action import ActionClient
 from my_msgs.action import StopFlag  # Actionメッセージのインポート
 from sensor_msgs.msg import Image
+import tf2_ros
 
 # C++と同じく、Node型を継承します。
 class WaypointManagerMaprun(Node):
@@ -130,6 +132,10 @@ class WaypointManagerMaprun(Node):
         
         #image angle
         self.angle_offset = 0
+
+        # tf
+        self.t = TransformStamped()
+        self.ekf_publish_TF = True
         
         ## ekf
         self.GTheta = None
@@ -167,7 +173,7 @@ class WaypointManagerMaprun(Node):
         self.start_position_init_y = 0.0#4.2 #[m]
 
         map_base_name = "waypoint_map_rgb"
-        folder_path = os.path.expanduser('~/ros2_ws/src/map/nakaniwa_manual')
+        folder_path = os.path.expanduser('~/ros2_ws/src/map/nakaniwa')
 
         # pngファイルを探索
         png_files = glob.glob(os.path.join(folder_path, '*.png'))
@@ -206,12 +212,8 @@ class WaypointManagerMaprun(Node):
         self.global_height_maps = np.stack(global_height_maps)
         self.global_reflect_map_resolution = np.stack(map_resolution)
         self.global_reflect_map_origin = np.stack(map_origin)
-        self.global_reflect_map_occupied_thresh = np.stack(
-            map_occupied_thresh
-        )
-        self.global_reflect_map_free_thresh = np.stack(
-            map_free_thresh
-        )
+        self.global_reflect_map_occupied_thresh = np.stack(map_occupied_thresh)
+        self.global_reflect_map_free_thresh = np.stack(map_free_thresh)
         wp_x = []
         wp_y = []
         wp_z = []
@@ -250,6 +252,11 @@ class WaypointManagerMaprun(Node):
         self.action_sent = False  # アクションが送信されたかを追跡
         self.stop = False # stopするかの変数(True=stop, False=go)
         self.is_initialized = False
+    
+    def reset_tf_buffer(self): 
+        # キャッシュのクリアとして、Bufferのインスタンスを再作成 
+        self.br = tf2_ros.TransformBroadcaster(self) 
+        self.get_logger().info('TransformBroadcaster has been reset')
 
     def get_local_height_map(self, msg):
         t_stamp = msg.header.stamp
@@ -306,7 +313,6 @@ class WaypointManagerMaprun(Node):
         # ==========================================================
         # coarse matching (without rotation)
         # ==========================================================
-        '''
         coarse_result = cv2.matchTemplate(global_ground.astype(np.uint8), local_ground_raw.astype(np.uint8), cv2.TM_CCOEFF_NORMED) # ground main
         #coarse_result = cv2.matchTemplate(global_rgb.astype(np.uint8), reflect_map_local_raw.astype(np.uint8), cv2.TM_CCOEFF_NORMED) # rgb main
         _, coarse_max_val, _, coarse_max_loc = cv2.minMaxLoc(coarse_result)
@@ -325,15 +331,14 @@ class WaypointManagerMaprun(Node):
         if (global_crop.shape[0] != h or global_crop.shape[1] != w):
             #print("global_crop size mismatch")
             return
-        '''
 
         # ==========================================================
         # angle estimation using cropped map
         # ==========================================================
-        #best_angle, best_score = self.find_best_rotation_angle(local_ground_raw, global_ground_crop, angle_range=10, step=0.5)
+        best_angle, best_score = self.find_best_rotation_angle(local_ground_raw, global_ground_crop, angle_range=10, step=0.5)
         #best_angle, dx, dy, best_score = self.estimate_affine_ecc(local_ground_raw, global_ground_crop) # ground main
         #best_angle, dx, dy, best_score = self.estimate_affine_ecc(reflect_map_local_raw, global_crop) # rgb main
-        best_angle = 0 # test
+        #best_angle = 0 # test
         self.angle_offset = best_angle
         #print(f"best_angle = {best_angle}")
         #print(f"best_score = {best_score}")
@@ -352,19 +357,7 @@ class WaypointManagerMaprun(Node):
         # ==========================================================
         #candidates = self.get_topk_template_matches(global_ground, local_ground, map_ground_pixel, MAP_RANGE_GL, MAP_RANGE, position_map, top_k=5) # ground main
         #candidates = self.get_topk_template_matches(global_rgb, reflect_map_local, map_ground_pixel, MAP_RANGE_GL, MAP_RANGE, position_map, top_k=5) # rgb main
-        candidates = self.get_topk_template_matches_multilayer(
-            global_ground,
-            global_mid,
-            global_high,
-            local_ground,
-            local_mid,
-            local_high,
-            map_ground_pixel,
-            MAP_RANGE_GL,
-            MAP_RANGE,
-            position_map,
-            top_k=5
-        ) # triple main
+        candidates = self.get_topk_template_matches_multilayer(global_ground, global_mid, global_high, local_ground, local_mid, local_high, map_ground_pixel, MAP_RANGE_GL, MAP_RANGE, position_map, top_k=5) # triple main
 
         # ==========================================================
         # verify using upper layers
@@ -387,7 +380,7 @@ class WaypointManagerMaprun(Node):
         else:
             ref_slam_xyz = [None, None, None]
             match_percentage = 0.0
-        print(f"match_percentage: {match_percentage}")
+        self.get_logger().info(f"match_percentage: {match_percentage}")
 
         # ==========================================================
         # no match
@@ -406,7 +399,7 @@ class WaypointManagerMaprun(Node):
         #self.odom_ref_slam_publisher.publish(odom_ref_slam_msg)
         if match_percentage > self.match_per_threshold: # high priority matching 0.35? 0.4?
             self.GpsXY = np.array([ref_slam_x, ref_slam_y ])
-            print(f"!!!!!high priority matching: {match_percentage}!!!!!")
+            self.get_logger().info(f"!!!!!high priority matching: {match_percentage}!!!!!")
             self.last_match_x = ref_slam_x
             self.last_match_y = ref_slam_y
             self.last_ekf_match_x = position_x
@@ -422,14 +415,30 @@ class WaypointManagerMaprun(Node):
         #self.robot_yaw = (theta_z + self.angle_offset) / 180 * math.pi
         self.robot_yaw = (ekf_theta_z + self.angle_offset) / 180 * math.pi
         #print(f"GpsXY = {self.GpsXY}")
-    
-    def calc_occupancy_ratio(self, img, threshold=20):
-        return np.count_nonzero(img > threshold) / img.size
-        
-        # サーバーにアクションを送信する関数
+
+    def extract_layer_maps(self, reflect_map_obs):
+        # OpenCVはBGR順
+        ground = reflect_map_obs[:, :, 0]
+        mid    = reflect_map_obs[:, :, 1]
+        high   = reflect_map_obs[:, :, 2]
+        return ground, mid, high
+
+    def preprocess_layer(self, img):
+        #img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX)
+        #img = img.astype(np.uint8)
+        # ノイズ除去
+        img = img.astype(np.uint8)
+
+        kernel = np.ones((3,3), np.uint8)
+        img = cv2.dilate(img, kernel, iterations=1)
+
+        img = cv2.GaussianBlur(img, (5,5), 0)
+        return img
+
+    # サーバーにアクションを送信する関数
     def send_action_request(self):
         goal_msg = StopFlag.Goal()
-        
+
         # stop変数の状態でaの値を決定
         if self.stop: # True
             goal_msg.a = 1  # stop
@@ -466,7 +475,6 @@ class WaypointManagerMaprun(Node):
         result = future.result().result
         self.get_logger().info(f"Result: {result.sum}")
         
-        
     def waypoint_manager(self):
         self.time_stamp = self.get_clock().now().to_msg()
         #self.get_logger().info('waypoint manager cntl')
@@ -488,7 +496,6 @@ class WaypointManagerMaprun(Node):
         #position_x= self.fused_msg.pose.pose.position.x
         #position_y= self.fused_msg.pose.pose.position.y
         #theta_z = self.robot_yaw
-        
         
         #waypoint theta & dist
         #set_waypoint = [self.waypoints[0,self.current_waypoint] - (position_x - odom_position_x), self.waypoints[1,self.current_waypoint] - (position_y - odom_position_y), self.waypoints[2,self.current_waypoint]]
@@ -541,13 +548,11 @@ class WaypointManagerMaprun(Node):
         flio_q_y = msg.pose.pose.orientation.y
         flio_q_z = msg.pose.pose.orientation.z
         flio_q_w = msg.pose.pose.orientation.w
-        
         roll, pitch, yaw = quaternion_to_euler(flio_q_x, flio_q_y, flio_q_z, flio_q_w)
         
         self.theta_x = 0 #roll /math.pi*180
         self.theta_y = 0 #pitch /math.pi*180
         self.theta_z = yaw /math.pi*180
-        
         
         ########### ekf ###########
         # current_time = self.get_clock().now().to_msg()
@@ -580,56 +585,14 @@ class WaypointManagerMaprun(Node):
         flio_q_y = msg.pose.pose.orientation.y
         flio_q_z = msg.pose.pose.orientation.z
         flio_q_w = msg.pose.pose.orientation.w
-        
         roll, pitch, yaw = quaternion_to_euler(flio_q_x, flio_q_y, flio_q_z, flio_q_w)
         
         self.ekf_theta_x = 0 #roll /math.pi*180
         self.ekf_theta_y = 0 #pitch /math.pi*180
         self.ekf_theta_z = yaw /math.pi*180
-        
-        
-    def match_images(self, img1, img2, min_matches=5, match_threshold=20):
-        
-        # ORB特徴点検出器の生成
-        orb = cv2.ORB_create()
+        self.ekf_orientation_z = flio_q_z
+        self.ekf_orientation_w = flio_q_w
 
-        # 特徴点とディスクリプタの検出
-        keypoints1, descriptors1 = orb.detectAndCompute(img1, None)
-        keypoints2, descriptors2 = orb.detectAndCompute(img2, None)
-
-        # BFMatcherを使用して特徴点をマッチング
-        bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-        matches = bf.match(descriptors1, descriptors2)
-        matches = sorted(matches, key=lambda x: x.distance)
-        
-         # マッチング結果が少ない場合は処理を中止
-        if len(matches) < min_matches:
-            self.get_logger().warn(f"Not enough matches ({len(matches)}/{min_matches}). Skipping.")
-            return None, None, None, None, None, None
-
-        # 有効なマッチングのみを抽出
-        good_matches = [m for m in matches if m.distance < match_threshold]
-
-        # 有効なマッチングが少ない場合は処理を中止
-        if len(good_matches) < min_matches:
-            self.get_logger().warn(f"Not enough good matches ({len(good_matches)}/{min_matches}). Skipping.")
-            return None, None, None, None, None, None
-        
-        # マッチングされた特徴点を抽出
-        src_pts = np.float32([keypoints1[m.queryIdx].pt for m in matches]).reshape(-1, 2)
-        dst_pts = np.float32([keypoints2[m.trainIdx].pt for m in matches]).reshape(-1, 2)
-
-        # ホモグラフィ行列の計算
-        M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
-
-        # 回転角度の計算
-        angle = -np.degrees(np.arctan2(M[1, 0], M[0, 0]))
-
-        # 平行移動量の計算
-        tx = M[0, 2]
-        ty = M[1, 2]
-        
-        return angle, tx, ty, good_matches, keypoints1, keypoints2
     def sad_score(self, img1, img2): 
         return np.sum(np.abs(img1.astype(np.int16) - img2.astype(np.int16)))
     
@@ -650,34 +613,7 @@ class WaypointManagerMaprun(Node):
                 best_angle = angle 
         self.angle_offset = best_angle
         #print(f"self.angle_offset: {self.angle_offset}")
-        return best_angle, min_sad
-    
-    def calculate_match_rate(self, sad, total_pixels): 
-        # SADスコアを基にマッチ率を計算 
-        match_rate = 100 * (1 - sad / (total_pixels * 255)) 
-        return match_rate 
-
-    def find_best_match(self, img1, img2): 
-        # 大きい方のサイズに合わせて画像をリサイズする 
-        h1, w1 = img1.shape[:2]
-        h2, w2 = img2.shape[:2]
-        h = max(h1, h2) 
-        w = max(w1, w2) 
-        # テンプレートマッチングの初期化 
-        best_sad = float('inf') 
-        best_location = (0, 0) 
-        for y in range(h2 - h1 + 1): 
-            for x in range(w2 - w1 + 1): 
-                # サブ画像を取り出してSADスコアを計算 
-                sub_img = img2[y:y+h1, x:x+w1] 
-                sad = self.sad_score(img1, sub_img) 
-                if sad < best_sad: 
-                    best_sad = sad 
-                    best_location = (x, y) 
-        # マッチ率を計算 
-        match_rate = self.calculate_match_rate(best_sad, resized_img1.size) 
-        return best_location, best_sad, match_rate
-    
+        return best_angle, min_sad   
     
     def rotate_image(self, image, angle): 
         # 画像の中心を計算 
@@ -688,7 +624,6 @@ class WaypointManagerMaprun(Node):
         # 画像を回転 
         rotated_image = cv2.warpAffine(image, M, (w, h)) 
         return rotated_image
-    
     
     def current_waypoint_msg(self, waypoint, set_frame_id):
         pose_array = geometry_msgs.PoseArray()
@@ -708,10 +643,6 @@ class WaypointManagerMaprun(Node):
         return pose_array
         
     ############ ekf #############
-    def orientation_to_yaw(self, z, w):
-        yaw = np.arctan2(2.0 * (w * z), 1.0 - 2.0 * (z ** 2))
-        return yaw
-
     def yaw_to_orientation(self, yaw):
         orientation_z = np.sin(yaw / 2.0)
         orientation_w = np.cos(yaw / 2.0)
@@ -791,225 +722,176 @@ class WaypointManagerMaprun(Node):
                 self.fused_msg.header.stamp = self.get_clock().now().to_msg()
                 self.fused_msg.header.frame_id = "odom"
                 self.fused_pub.publish(self.fused_msg)
+                if self.ekf_publish_TF:
+                    self.t.header.stamp = self.get_clock().now().to_msg()
+                    self.t.header.frame_id = "odom"
+                    self.t.child_frame_id = "base_footprint"
+                    self.t.transform.translation.x = float(fused_value[0])
+                    self.t.transform.translation.y = float(fused_value[1])
+                    self.t.transform.translation.z = 0.0
+                    self.t.transform.rotation.x = 0.0
+                    self.t.transform.rotation.y = 0.0
+                    self.t.transform.rotation.z = float(self.robot_orientationz)
+                    self.t.transform.rotation.w = float(self.robot_orientationw)
+                    self.br.sendTransform(self.t)
                 #print(f"fused_value: {fused_value}")
+        else:
+            ekf_position_x = self.ekf_position_x
+            ekf_position_y = self.ekf_position_y
+            ekf_position_z = self.ekf_position_z
+            flio_q_z = self.ekf_orientation_z
+            flio_q_w = self.ekf_orientation_w
+            if self.ekf_publish_TF:
+                    self.t.header.stamp = self.get_clock().now().to_msg()
+                    self.t.header.frame_id = "odom"
+                    self.t.child_frame_id = "base_footprint"
+                    self.t.transform.translation.x = ekf_position_x
+                    self.t.transform.translation.y = ekf_position_y
+                    self.t.transform.translation.z = 0.0
+                    self.t.transform.rotation.x = 0.0
+                    self.t.transform.rotation.y = 0.0
+                    self.t.transform.rotation.z = flio_q_z
+                    self.t.transform.rotation.w = flio_q_w
+                    self.br.sendTransform(self.t)
         #print("publish_fused_value called")
         #print(f"GpsXY = {self.GpsXY}")
-    
-    def extract_layer_maps(self, reflect_map_obs):
-        # OpenCVはBGR順
-        ground = reflect_map_obs[:, :, 0]
-        mid    = reflect_map_obs[:, :, 1]
-        high   = reflect_map_obs[:, :, 2]
-        return ground, mid, high
 
-    def preprocess_layer(self, img):
-        #img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX)
-        #img = img.astype(np.uint8)
-        # ノイズ除去
-        img = img.astype(np.uint8)
-
-        kernel = np.ones((3,3), np.uint8)
-        img = cv2.dilate(img, kernel, iterations=1)
-
-        img = cv2.GaussianBlur(img, (5,5), 0)
-        return img
-
-    def calc_entropy_score(self, img):
-        lap = cv2.Laplacian(img, cv2.CV_64F)
-        score = lap.var()
-        return score
-
-    def get_topk_template_matches(
-            self,
-            global_map,
-            local_map,
-            pixel,
-            global_map_range,
-            local_map_range,
-            position_map,
-            top_k=5):
-        result = cv2.matchTemplate(
-            global_map.astype(np.uint8),
-            local_map.astype(np.uint8),
-            cv2.TM_CCOEFF_NORMED # TM_CCOEFF_NORMED / TM_SQDIFF_NORMED
-        )
+    def get_topk_template_matches(self, global_map, local_map, pixel, global_map_range, local_map_range, position_map, top_k=5):
+        result = cv2.matchTemplate(global_map.astype(np.uint8), local_map.astype(np.uint8), cv2.TM_CCOEFF_NORMED) # TM_CCOEFF_NORMED / TM_SQDIFF_NORMED
         candidates = []
         result_copy = result.copy()
         for _ in range(top_k):
             min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result_copy)
             max_loc_x = max_loc[0] / pixel
             max_loc_y = max_loc[1] / pixel
-            pos_x = (
-                position_map[0]
-                - global_map_range
-                + max_loc_x
-                + local_map_range
-            )
-            pos_y = (
-                position_map[1]
-                + global_map_range
-                - max_loc_y
-                - local_map_range
-            )
-            candidates.append({
-                "score": float(max_val), # max_val / 1.0 - min_val
-                "x": float(pos_x),
-                "y": float(pos_y),
-                "loc": max_loc
-            })
+            pos_x = (position_map[0] - global_map_range + max_loc_x + local_map_range)
+            pos_y = (position_map[1] + global_map_range - max_loc_y - local_map_range)
+            candidates.append({"score": float(max_val), "x": float(pos_x), "y": float(pos_y), "loc": max_loc}) # max_val / 1.0 - min_val
 
             # 近傍抑制
-            cv2.circle(
-                result_copy,
-                max_loc,
-                30,
-                -1,
-                thickness=-1
-            )
+            cv2.circle(result_copy, max_loc, 30, -1, thickness=-1)
 
         return candidates
 
-    def get_topk_template_matches_multilayer(
-            self,
-            global_ground,
-            global_mid,
-            global_high,
-            local_ground,
-            local_mid,
-            local_high,
-            pixel,
-            global_map_range,
-            local_map_range,
-            position_map,
-            top_k=5):
+    def get_topk_template_matches_multilayer(self, global_ground, global_mid, global_high, local_ground, local_mid, local_high, pixel, global_map_range, local_map_range, position_map,top_k=5):
+        # --------------------------
+        # layer matching
+        # --------------------------
+        res_ground = cv2.matchTemplate(global_ground, local_ground, cv2.TM_CCOEFF_NORMED)
+        res_mid = cv2.matchTemplate(global_mid, local_mid, cv2.TM_CCORR_NORMED)
+        res_high = cv2.matchTemplate(global_high, local_high, cv2.TM_CCORR_NORMED)
+        peak_ground = self.calc_peak_ratio(res_ground)
+        peak_mid    = self.calc_peak_ratio(res_mid)
+        peak_high   = self.calc_peak_ratio(res_high)
+        _, max_ground, _, loc_ground = cv2.minMaxLoc(res_ground)
+        _, max_mid,    _, loc_mid    = cv2.minMaxLoc(res_mid)
+        _, max_high,   _, loc_high   = cv2.minMaxLoc(res_high)
+        psr_ground = self.calc_psr(res_ground, loc_ground)
+        psr_mid = self.calc_psr(res_mid, loc_mid)
+        psr_high = self.calc_psr(res_high, loc_high)
 
         # --------------------------
         # occupancy
         # --------------------------
-
         occ_ground = self.calc_occupancy_ratio(local_ground)
         occ_mid    = self.calc_occupancy_ratio(local_mid)
         occ_high   = self.calc_occupancy_ratio(local_high)
 
-        if occ_mid < 0.01:
+        if occ_mid < 0.03:
             occ_mid = 0
-
-        if occ_high < 0.01:
+        if occ_high < 0.03:
             occ_high = 0
+        if occ_ground > 0.04:
+            rel_mid  = occ_mid  / (occ_ground + 1e-6)
+            rel_high = occ_high / (occ_ground + 1e-6)
+        else:
+            rel_mid  = occ_mid
+            rel_high = occ_high
+        confidence_mid  = min(1.0, rel_mid  / 0.3)
+        confidence_high = min(1.0, rel_high / 0.3)
 
-        weight_sum = occ_ground + occ_mid + occ_high
+        score_mid  = psr_mid  * confidence_mid
+        score_high = psr_high * confidence_high
+        score_ground = psr_ground
+
+        #score_ground = occ_ground * peak_ground
+        #score_mid    = occ_mid    * peak_mid
+        #score_high   = occ_high   * peak_high
+        #score_ground = psr_ground
+        #score_mid    = psr_mid
+        #score_high   = psr_high
+
+        #weight_sum = occ_ground + occ_mid + occ_high
+        weight_sum = score_ground + score_mid + score_high
 
         if weight_sum < 1e-6:
             weight_sum = 1.0
 
-        w_ground = occ_ground / weight_sum
-        w_mid    = occ_mid / weight_sum
-        w_high   = occ_high / weight_sum
+        w_ground = score_ground / weight_sum
+        w_mid    = score_mid / weight_sum
+        w_high   = score_high / weight_sum
+        #w_ground = occ_ground / weight_sum
+        #w_mid    = occ_mid / weight_sum
+        #w_high   = occ_high / weight_sum
 
-        print(
-            f"occ = "
-            f"{occ_ground:.3f}, "
-            f"{occ_mid:.3f}, "
-            f"{occ_high:.3f}"
-        )
-
-        print(
-            f"weight = "
-            f"{w_ground:.3f}, "
-            f"{w_mid:.3f}, "
-            f"{w_high:.3f}"
-        )
-
-        # --------------------------
-        # layer matching
-        # --------------------------
-
-        res_ground = cv2.matchTemplate(
-            global_ground,
-            local_ground,
-            cv2.TM_CCOEFF_NORMED
-        )
-
-        res_mid = cv2.matchTemplate(
-            global_mid,
-            local_mid,
-            cv2.TM_CCORR_NORMED
-        )
-
-        res_high = cv2.matchTemplate(
-            global_high,
-            local_high,
-            cv2.TM_CCORR_NORMED
-        )
+        self.get_logger().info(f"occ = "f"{occ_ground:.3f}, "f"{occ_mid:.3f}, "f"{occ_high:.3f}")
+        self.get_logger().info(f"score peak = "f"{score_ground:.3f}, "f"{score_mid:.3f}, "f"{score_high:.3f}")
+        self.get_logger().info(f"weight = "f"{w_ground:.3f}, "f"{w_mid:.3f}, "f"{w_high:.3f}")
 
         # --------------------------
         # fusion
         # --------------------------
-
-        result = (
-            w_ground * res_ground +
-            w_mid    * res_mid +
-            w_high   * res_high
-        )
-
+        result = (w_ground * res_ground + w_mid * res_mid + w_high * res_high)
         candidates = []
-
         result_copy = result.copy()
 
         for _ in range(top_k):
-
-            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(
-                result_copy
-            )
-
+            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result_copy)
             max_loc_x = max_loc[0] / pixel
             max_loc_y = max_loc[1] / pixel
-
-            pos_x = (
-                position_map[0]
-                - global_map_range
-                + max_loc_x
-                + local_map_range
-            )
-
-            pos_y = (
-                position_map[1]
-                + global_map_range
-                - max_loc_y
-                - local_map_range
-            )
-
-            candidates.append({
-                "score": float(max_val),
-                "x": float(pos_x),
-                "y": float(pos_y),
-                "loc": max_loc
-            })
-
-            cv2.circle(
-                result_copy,
-                max_loc,
-                30,
-                -1,
-                thickness=-1
-            )
+            pos_x = (position_map[0] - global_map_range + max_loc_x + local_map_range)
+            pos_y = (position_map[1] + global_map_range - max_loc_y - local_map_range)
+            candidates.append({"score": float(max_val), "x": float(pos_x), "y": float(pos_y), "loc": max_loc})
+            cv2.circle(result_copy, max_loc, 30, -1, thickness=-1)
 
         return candidates
 
-    def verify_candidates_multi_layer(
-        self,
-        candidates
-    ):
+    def calc_psr(self, score_map, peak_loc, exclusion_radius=15):
+        h, w = score_map.shape
+        mask = np.ones_like(score_map, dtype=np.uint8)
+        cv2.circle(mask, peak_loc, exclusion_radius, 0, thickness=-1)
+        sidelobe = score_map[mask > 0]
 
+        if len(sidelobe) < 10:
+            return 0.0
+
+        mean_side = np.mean(sidelobe)
+        std_side  = np.std(sidelobe)
+
+        if std_side < 1e-6:
+            return 0.0
+
+        peak = score_map[peak_loc[1], peak_loc[0]]
+        psr = (peak - mean_side) / std_side
+
+        return psr
+    
+    def calc_occupancy_ratio(self, img, threshold=20):
+        return np.count_nonzero(img > threshold) / img.size
+    
+    def calc_peak_ratio(self, score_map):
+        max_val = np.max(score_map)
+        mean_val = np.mean(score_map)
+        peak_ratio = max_val / (mean_val + 1e-6)
+        peak_score = max_val - mean_val
+        return peak_score
+
+    def verify_candidates_multi_layer(self, candidates):
         best_candidate = None
         best_score = -999
 
         for cand in candidates:
-
-            dist = np.sqrt(
-                (cand["x"] - self.ref_slam_x_buff)**2 +
-                (cand["y"] - self.ref_slam_y_buff)**2
-            )
+            dist = np.sqrt((cand["x"] - self.ref_slam_x_buff)**2 + (cand["y"] - self.ref_slam_y_buff)**2)
 
             if dist > 1.5: # 1.0
                 continue
@@ -1021,38 +903,16 @@ class WaypointManagerMaprun(Node):
         return best_candidate
     
     def estimate_affine_ecc(self, local_img, global_img):
-
         local_gray = local_img.astype(np.float32) / 255.0
         global_gray = global_img.astype(np.float32) / 255.0
-
         warp_matrix = np.eye(2, 3, dtype=np.float32)
-
-        criteria = (
-            cv2.TERM_CRITERIA_EPS |
-            cv2.TERM_CRITERIA_COUNT,
-            50,
-            1e-5
-        )
+        criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 50, 1e-5)
 
         try:
-            cc, warp_matrix = cv2.findTransformECC(
-                global_gray,
-                local_gray,
-                warp_matrix,
-                cv2.MOTION_EUCLIDEAN,
-                criteria
-            )
-
+            cc, warp_matrix = cv2.findTransformECC(global_gray, local_gray, warp_matrix, cv2.MOTION_EUCLIDEAN, criteria)
             dx = warp_matrix[0, 2]
             dy = warp_matrix[1, 2]
-
-            angle = np.degrees(
-                np.arctan2(
-                    warp_matrix[1,0],
-                    warp_matrix[0,0]
-                )
-            )
-
+            angle = np.degrees(np.arctan2(warp_matrix[1,0], warp_matrix[0,0]))
             return angle, dx, dy, cc
 
         except cv2.error:
@@ -1107,7 +967,6 @@ def odometry_msg(pos_x, pos_y, pos_z, theta_x, theta_y, theta_z, stamp, frame_id
     odom_msg.pose.pose.orientation = Quaternion(x=quat[1], y=quat[2], z=quat[3], w=quat[0])
     
     return odom_msg
-
 
 def rotation_xyz(pointcloud, theta_x, theta_y, theta_z):
     theta_x = math.radians(theta_x)
@@ -1207,6 +1066,7 @@ def main(args=None):
     rclpy.init(args=args)
     # クラスのインスタンスを作成
     waypoint_manager_maprun = WaypointManagerMaprun()
+    waypoint_manager_maprun.reset_tf_buffer()
     # spin処理を実行、spinをしていないとROS 2のノードはデータを入出力することが出来ません。
     rclpy.spin(waypoint_manager_maprun)
     # 明示的にノードの終了処理を行います。

@@ -153,8 +153,8 @@ class ObsBayesMap(Node):
         self.map_data_flag = 0
         self.map_data_gl = 0
         self.map_data_gl_flag = 0
-        self.MAKE_GL_MAP_FLAG = 1 # make map
-        self.save_dir = os.path.expanduser('~/ros2_ws/src/map/nakaniwa_0520')
+        self.MAKE_GL_MAP_FLAG = 0 # make map
+        self.save_dir = os.path.expanduser('~/ros2_ws/src/map/test')
         yaml.add_representer(OrderedDict, ordered_dict_representer, Dumper=MyDumper)
         yaml.add_representer(list, list_representer, Dumper=MyDumper)
 
@@ -246,18 +246,10 @@ class ObsBayesMap(Node):
         t0 = time.perf_counter()
 
         try:
-            transform = self.tf_buffer.lookup_transform(
-                "odom",
-                "livox_frame",
-                rclpy.time.Time.from_msg(
-                    ground_msg.header.stamp
-                )# ground_msg.header.stamp
-            )
+            transform = self.tf_buffer.lookup_transform("odom", "livox_frame", rclpy.time.Time.from_msg(ground_msg.header.stamp))
 
         except TransformException as ex:
-            self.get_logger().warn(
-                f"TF lookup failed: {ex}"
-            )
+            self.get_logger().warn(f"TF lookup failed: {ex}")
             return        
 
         # ground_points
@@ -289,18 +281,10 @@ class ObsBayesMap(Node):
         prev_x = self.prev_x
         prev_y = self.prev_y
 
-        map_pos_diff = np.sqrt(
-            (ekf_position_x - self.map_position_x_buff)**2 +
-            (ekf_position_y - self.map_position_y_buff)**2
-        )
+        map_pos_diff = np.sqrt((ekf_position_x - self.map_position_x_buff)**2 + (ekf_position_y - self.map_position_y_buff)**2)
+        map_theta_diff = abs(ekf_theta_z - self.map_theta_z_buff)
 
-        map_theta_diff = abs(
-            ekf_theta_z - self.map_theta_z_buff
-        )
-
-        is_keyframe = (
-            (map_pos_diff > 1.0)
-        ) # or ((map_pos_diff > 0.2) and (map_theta_diff > 40))
+        is_keyframe = ((map_pos_diff > 1.0)) # or ((map_pos_diff > 0.2) and (map_theta_diff > 40))
 
         # local map
         middle_x_local = middle_x_rot
@@ -517,81 +501,27 @@ class ObsBayesMap(Node):
         #ground_x_global = ground_rot[0,:] + position[0]
         #ground_y_global = ground_rot[1,:] + position[1]
         #ground_global = np.vstack((ground_x_global, ground_y_global, ground_rot[2,:], ground_points[3,:]) , dtype=np.float32)
-        ground_global_msg = do_transform_cloud(
-            ground_msg,
-            transform
-        )
-
-        ground_x_global, \
-        ground_y_global, \
-        ground_z_global, \
-        ground_intensity_global = self.pointcloud2_to_array(
-            ground_global_msg
-        )
-
-        ground_global = np.vstack(
-            (
-                ground_x_global,
-                ground_y_global,
-                ground_z_global,
-                ground_intensity_global
-            ),
-            dtype=np.float32
-        )
+        ground_global_msg = do_transform_cloud(ground_msg, transform)
+        ground_x_global, ground_y_global, ground_z_global, ground_intensity_global = self.pointcloud2_to_array(ground_global_msg)
+        ground_global = np.vstack((ground_x_global, ground_y_global, ground_z_global, ground_intensity_global), dtype=np.float32)
         
         #middle global
         middle_rot, middle_rot_matrix = rotation_xyz(middle_points[[0,1,2],:], theta_x, theta_y, theta_z)
         #middle_x_global = middle_rot[0,:] + position_x
         #middle_y_global = middle_rot[1,:] + position_y
         #middle_global = np.vstack((middle_x_global, middle_y_global, middle_rot[2,:], middle_points[3,:]) , dtype=np.float32)
-        middle_global_msg = do_transform_cloud(
-            middle_msg,
-            transform
-        )
-
-        middle_x_global, \
-        middle_y_global, \
-        middle_z_global, \
-        middle_intensity_global = self.pointcloud2_to_array(
-            middle_global_msg
-        )
-
-        middle_global = np.vstack(
-            (
-                middle_x_global,
-                middle_y_global,
-                middle_z_global,
-                middle_intensity_global
-            ),
-            dtype=np.float32
-        )
+        middle_global_msg = do_transform_cloud(middle_msg, transform)
+        middle_x_global, middle_y_global, middle_z_global, middle_intensity_global = self.pointcloud2_to_array(middle_global_msg)
+        middle_global = np.vstack((middle_x_global, middle_y_global, middle_z_global, middle_intensity_global), dtype=np.float32)
         
         #high global
         high_rot, high_rot_matrix = rotation_xyz(high_points[[0,1,2],:], theta_x, theta_y, theta_z)
         #high_x_grobal = high_rot[0,:] + position_x
         #high_y_grobal = high_rot[1,:] + position_y
         #high_global = np.vstack((high_x_grobal, high_y_grobal, high_rot[2,:], high_points[3,:]) , dtype=np.float32)
-        high_global_msg = do_transform_cloud(
-            high_msg,
-            transform
-        )
-
-        high_x_global, \
-        high_y_global, \
-        high_z_global, \
-        high_intensity_global = self.pointcloud2_to_array(
-            high_global_msg
-        )
-
-        high_global = np.vstack(
-            (
-                high_x_global,
-                high_y_global,
-                high_z_global,
-                high_intensity_global
-            ),
-            dtype=np.float32
-        )
+        high_global_msg = do_transform_cloud(high_msg, transform)
+        high_x_global,  high_y_global, high_z_global, high_intensity_global = self.pointcloud2_to_array(high_global_msg)
+        high_global = np.vstack((high_x_global, high_y_global, high_z_global, high_intensity_global), dtype=np.float32)
 
         #map lim set
         map_lim_x_min = position_x + self.MAP_LIM_X_MIN;
@@ -809,11 +739,7 @@ class ObsBayesMap(Node):
         ground_global_msg = point_cloud_intensity_msg(self.pcd_ground_buff.T, t_stamp, 'odom')
         #self.pcd_ground_global_publisher.publish(ground_global_msg) 
         t4=time.perf_counter()
-        tmp_msg = point_cloud_intensity_msg(
-            ground_global.T,
-            t_stamp,
-            'odom'
-        )
+        tmp_msg = point_cloud_intensity_msg(ground_global.T, t_stamp, 'odom')
         self.pcd_ground_global_publisher.publish(tmp_msg)
         '''
         #local map ground
@@ -840,11 +766,6 @@ class ObsBayesMap(Node):
         #rgb_local_msg.header.stamp = t_stamp
         #rgb_local_msg.header.frame_id = "odom"
         #self.rgb_map_local_pub.publish(rgb_local_msg)
-        print(
-            position_x,
-            position_y,
-            theta_z
-        )
         #rgb_global = self.make_rgb_map(map_data_ground_gl_set, map_data_middle_gl_set, map_data_high_gl_set)
         #rgb_global_msg = self.bridge.cv2_to_imgmsg(rgb_global, encoding='bgr8')
         #rgb_global_msg.header.stamp = t_stamp
@@ -855,7 +776,6 @@ class ObsBayesMap(Node):
         if self.MAKE_GL_MAP_FLAG == 1:
             map_pos_diff = math.sqrt((ekf_position_x - self.map_position_x_buff)**2 + (ekf_position_y - self.map_position_y_buff)**2)
             map_theta_diff = abs(ekf_theta_z -  self.map_theta_z_buff)
-            self.prev_dist = map_pos_diff
             
             if ( (map_pos_diff > 5) or ((map_pos_diff > 2) and (map_theta_diff > 40)) ):
                 self.save_flag = 1
@@ -879,7 +799,7 @@ class ObsBayesMap(Node):
         #remove_vis[gx[remove_mask], gy[remove_mask]] = 100
         #remove_vis[dynamic_occ > 0] = 20
         #remove_vis[middle_global_x[remove_middle_mask], middle_global_y[remove_middle_mask]] = 100
-        '''
+        
         # Publish
         grid = OccupancyGrid()
         grid.header = middle_msg.header
@@ -909,12 +829,12 @@ class ObsBayesMap(Node):
         log_grid.data = occ_log.flatten().tolist()
         self.log_map_pub.publish(log_grid)
 
-        remove_grid = OccupancyGrid()
-        remove_grid.header = grid.header
-        remove_grid.info = grid.info
-        remove_grid.data = remove_vis.flatten().tolist()
-        self.remove_map_pub.publish(remove_grid)
-        '''
+        #remove_grid = OccupancyGrid()
+        #remove_grid.header = grid.header
+        #remove_grid.info = grid.info
+        #remove_grid.data = remove_vis.flatten().tolist()
+        #self.remove_map_pub.publish(remove_grid)
+        
         # Update previous pose
         self.prev_x = self.position_x
         self.prev_y = self.position_y
@@ -1003,20 +923,14 @@ class ObsBayesMap(Node):
         print("middle max =", np.max(middle_img))
         print("high max =", np.max(high_img))
         map_number_str = str(self.map_number).zfill(3)
-        png_filename = os.path.join(
-            self.save_dir,
-            f'waypoint_map_rgb_{map_number_str}.png'
-        )
+        png_filename = os.path.join(self.save_dir, f'waypoint_map_rgb_{map_number_str}.png')
         yaml_filename = os.path.join(self.save_dir, f'waypoint_map_rgb_{map_number_str}' + ".yaml")
         os.makedirs(self.save_dir, exist_ok=True)
         # float32化
         ground = ground_img.astype(np.float32)
         middle = middle_img.astype(np.float32)
         high = high_img.astype(np.float32)
-        rgb_map = np.zeros(
-            (ground.shape[0], ground.shape[1], 3),
-            dtype=np.uint8
-        )
+        rgb_map = np.zeros((ground.shape[0], ground.shape[1], 3), dtype=np.uint8)
         # BGR(OpenCV)
         rgb_map[:, :, 0] = np.clip(ground * 255.0 / 100.0, 0, 255).astype(np.uint8)
         rgb_map[:, :, 1] = np.clip(middle * 255.0 / 100.0, 0, 255).astype(np.uint8)

@@ -380,7 +380,7 @@ class WaypointManagerMaprun(Node):
         else:
             ref_slam_xyz = [None, None, None]
             match_percentage = 0.0
-        print(f"match_percentage: {match_percentage}")
+        self.get_logger().info(f"match_percentage: {match_percentage}")
 
         # ==========================================================
         # no match
@@ -399,7 +399,7 @@ class WaypointManagerMaprun(Node):
         #self.odom_ref_slam_publisher.publish(odom_ref_slam_msg)
         if match_percentage > self.match_per_threshold: # high priority matching 0.35? 0.4?
             self.GpsXY = np.array([ref_slam_x, ref_slam_y ])
-            print(f"!!!!!high priority matching: {match_percentage}!!!!!")
+            self.get_logger().info(f"!!!!!high priority matching: {match_percentage}!!!!!")
             self.last_match_x = ref_slam_x
             self.last_match_y = ref_slam_y
             self.last_ekf_match_x = position_x
@@ -834,9 +834,9 @@ class WaypointManagerMaprun(Node):
         #w_mid    = occ_mid / weight_sum
         #w_high   = occ_high / weight_sum
 
-        print(f"occ = "f"{occ_ground:.3f}, "f"{occ_mid:.3f}, "f"{occ_high:.3f}")
-        print(f"score peak = "f"{score_ground:.3f}, "f"{score_mid:.3f}, "f"{score_high:.3f}")
-        print(f"weight = "f"{w_ground:.3f}, "f"{w_mid:.3f}, "f"{w_high:.3f}")
+        self.get_logger().info(f"occ = "f"{occ_ground:.3f}, "f"{occ_mid:.3f}, "f"{occ_high:.3f}")
+        self.get_logger().info(f"score peak = "f"{score_ground:.3f}, "f"{score_mid:.3f}, "f"{score_high:.3f}")
+        self.get_logger().info(f"weight = "f"{w_ground:.3f}, "f"{w_mid:.3f}, "f"{w_high:.3f}")
 
         # --------------------------
         # fusion

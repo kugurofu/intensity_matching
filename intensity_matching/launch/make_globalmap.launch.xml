@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="save_dir" default="~/ros2_ws/src/map/test"/>
+  <!-- global map -->
+  <node pkg="intensity_matching" exec="reflection_intensity_globalmap_multi_sub">
+  </node>
+</launch>

@@ -153,8 +153,8 @@ class ObsBayesMap(Node):
         self.map_data_flag = 0
         self.map_data_gl = 0
         self.map_data_gl_flag = 0
-        self.MAKE_GL_MAP_FLAG = 0 # make map
-        self.save_dir = os.path.expanduser('~/ros2_ws/src/map/test')
+        self.MAKE_GL_MAP_FLAG = 1 # make map
+        self.save_dir = os.path.expanduser('~/ros2_ws/src/map/kitakan')
         yaml.add_representer(OrderedDict, ordered_dict_representer, Dumper=MyDumper)
         yaml.add_representer(list, list_representer, Dumper=MyDumper)
 

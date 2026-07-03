@@ -61,9 +61,9 @@ class WaypointManagerMaprun(Node):
             depth = 10
         )
         # Subscriptionを作成。
-        self.subscription = self.create_subscription(nav_msgs.Odometry,'/odom/combine', self.get_odom, qos_profile_sub)
+        self.subscription = self.create_subscription(nav_msgs.Odometry,'/odom/wheel_spimu', self.get_odom, qos_profile_sub)
         #self.subscription = self.create_subscription(nav_msgs.Odometry,'/odom_fast', self.get_odom, qos_profile_sub)
-        self.subscription = self.create_subscription(nav_msgs.Odometry,'/odom/combine', self.get_ekf_odom, qos_profile_sub)
+        self.subscription = self.create_subscription(nav_msgs.Odometry,'/odom/wheel_spimu', self.get_ekf_odom, qos_profile_sub)
         self.subscription = self.create_subscription(Image,'/rgb_reflect_map_local', self.get_local_height_map, qos_profile_sub)
         self.bridge = CvBridge()
         #self.subscription = self.create_subscription(Image,'/local_height_map',self.get_local_height_map,qos_profile_sub)
@@ -108,6 +108,8 @@ class WaypointManagerMaprun(Node):
         self.ekf_theta_x = 0.0 #[deg]
         self.ekf_theta_y = 0.0 #[deg]
         self.ekf_theta_z = 0.0 #[deg]
+        self.ekf_orientation_z = 0.0
+        self.ekf_orientation_w = 0.0
         
         #match init
         self.odom_x_buff = 0.0
@@ -173,7 +175,7 @@ class WaypointManagerMaprun(Node):
         self.start_position_init_y = 0.0#4.2 #[m]
 
         map_base_name = "waypoint_map_rgb"
-        folder_path = os.path.expanduser('~/ros2_ws/src/map/nakaniwa')
+        folder_path = os.path.expanduser('~/ros2_ws/src/map/kitakan')
 
         # pngファイルを探索
         png_files = glob.glob(os.path.join(folder_path, '*.png'))
@@ -415,6 +417,8 @@ class WaypointManagerMaprun(Node):
         #self.robot_yaw = (theta_z + self.angle_offset) / 180 * math.pi
         self.robot_yaw = (ekf_theta_z + self.angle_offset) / 180 * math.pi
         #print(f"GpsXY = {self.GpsXY}")
+        waypoint_path = path_msg(self.waypoints, t_stamp, 'odom')
+        self.waypoint_path_publisher.publish(waypoint_path) 
 
     def extract_layer_maps(self, reflect_map_obs):
         # OpenCVはBGR順
@@ -538,6 +542,7 @@ class WaypointManagerMaprun(Node):
         #publish
         pose_array = self.current_waypoint_msg(set_waypoint, 'odom')
         self.current_waypoint_publisher.publish(pose_array)
+        
         
     def get_odom(self, msg):
         self.position_x = msg.pose.pose.position.x
@@ -702,8 +707,11 @@ class WaypointManagerMaprun(Node):
         
     def publish_fused_value(self):
         #if self.Speed is not None and self.SmpTime is not None and self.GTheta is not None:
+        print("publish_fused_value called")
         if self.Speed is not None and self.SmpTime is not None :
+            print("test 0")
             if self.GpsXY is not None :
+                print("test 1")
                 kalf_speed = self.Speed * self.kalf_speed_param
                 fused_value = self.KalfGPSXY(
                     kalf_speed, self.SmpTime, self.robot_yaw, self.GpsXY, self.R1, self.R2)    
@@ -734,8 +742,30 @@ class WaypointManagerMaprun(Node):
                     self.t.transform.rotation.z = float(self.robot_orientationz)
                     self.t.transform.rotation.w = float(self.robot_orientationw)
                     self.br.sendTransform(self.t)
+                    print("send tf 1")
                 #print(f"fused_value: {fused_value}")
+            else:
+                print("test 3")
+                ekf_position_x = self.ekf_position_x
+                ekf_position_y = self.ekf_position_y
+                ekf_position_z = self.ekf_position_z
+                flio_q_z = self.ekf_orientation_z
+                flio_q_w = self.ekf_orientation_w
+                if self.ekf_publish_TF:
+                        self.t.header.stamp = self.get_clock().now().to_msg()
+                        self.t.header.frame_id = "odom"
+                        self.t.child_frame_id = "base_footprint"
+                        self.t.transform.translation.x = ekf_position_x
+                        self.t.transform.translation.y = ekf_position_y
+                        self.t.transform.translation.z = 0.0
+                        self.t.transform.rotation.x = 0.0
+                        self.t.transform.rotation.y = 0.0
+                        self.t.transform.rotation.z = flio_q_z
+                        self.t.transform.rotation.w = flio_q_w
+                        self.br.sendTransform(self.t)
+                        print("send tf 3")
         else:
+            print("test 2")
             ekf_position_x = self.ekf_position_x
             ekf_position_y = self.ekf_position_y
             ekf_position_z = self.ekf_position_z
@@ -753,7 +783,8 @@ class WaypointManagerMaprun(Node):
                     self.t.transform.rotation.z = flio_q_z
                     self.t.transform.rotation.w = flio_q_w
                     self.br.sendTransform(self.t)
-        #print("publish_fused_value called")
+                    print("send tf 2")
+        
         #print(f"GpsXY = {self.GpsXY}")
 
     def get_topk_template_matches(self, global_map, local_map, pixel, global_map_range, local_map_range, position_map, top_k=5):

@@ -88,11 +88,7 @@ class ObsBayesMap(Node):
         #tf
         self.tf_broadcaster = TransformBroadcaster(self)
         self.tf_buffer = Buffer(cache_time=rclpy.duration.Duration(seconds=10.0))
-        self.tf_listener = TransformListener(
-            self.tf_buffer,
-            self,
-            spin_thread=True
-        )
+        self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=True)
 
         # Parameter
         self.grid_pixel = 1000 / 50.0
@@ -217,7 +213,7 @@ class ObsBayesMap(Node):
         t.transform.translation.y = msg.pose.pose.position.y
         t.transform.translation.z = msg.pose.pose.position.z
         t.transform.rotation = msg.pose.pose.orientation
-        self.tf_broadcaster.sendTransform(t)
+        #self.tf_broadcaster.sendTransform(t)
 
     def pointcloud2_to_array(self, msg):
         points = np.frombuffer(msg.data, dtype=np.uint8).reshape(-1, msg.point_step)

@@ -51,6 +51,13 @@ class ObsBayesMap(Node):
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
             depth = 1
         )
+
+        # set parameter (launch can change this parameter)
+        self.declare_parameter('save_dir', '~/ros2_ws/src/map/test2')
+        
+        # define parameter
+        save_dir = self.get_parameter('save_dir').get_parameter_value().string_value
+
         # Subscriber
         self.local_odom_sub = self.create_subscription(nav_msgs.Odometry,'/fusion/odom',self.get_local_odom, qos_profile_sub)
         self.global_odom_sub = self.create_subscription(nav_msgs.Odometry,'/fusion/odom', self.get_global_odom, qos_profile_sub)
@@ -154,7 +161,7 @@ class ObsBayesMap(Node):
         self.map_data_gl = 0
         self.map_data_gl_flag = 0
         self.MAKE_GL_MAP_FLAG = 1 # make map
-        self.save_dir = os.path.expanduser('~/ros2_ws/src/map/kitakan')
+        self.save_dir = os.path.expanduser(save_dir)
         yaml.add_representer(OrderedDict, ordered_dict_representer, Dumper=MyDumper)
         yaml.add_representer(list, list_representer, Dumper=MyDumper)
 

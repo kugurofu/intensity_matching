@@ -60,6 +60,13 @@ class WaypointManagerMaprun(Node):
             durability=QoSDurabilityPolicy.VOLATILE,
             depth = 10
         )
+
+        # set parameter (launch can change this parameter)
+        self.declare_parameter('folder_path', '~/ros2_ws/src/map/kitakan')
+        
+        # define parameter
+        folder_path = self.get_parameter('folder_path').get_parameter_value().string_value
+
         # Subscriptionを作成。
         self.subscription = self.create_subscription(nav_msgs.Odometry,'/odom/wheel_spimu', self.get_odom, qos_profile_sub)
         #self.subscription = self.create_subscription(nav_msgs.Odometry,'/odom_fast', self.get_odom, qos_profile_sub)
@@ -175,12 +182,12 @@ class WaypointManagerMaprun(Node):
         self.start_position_init_y = 0.0#4.2 #[m]
 
         map_base_name = "waypoint_map_rgb"
-        folder_path = os.path.expanduser('~/ros2_ws/src/map/kitakan')
+        self.folder_path = os.path.expanduser(folder_path)
 
         # pngファイルを探索
-        png_files = glob.glob(os.path.join(folder_path, '*.png'))
+        png_files = glob.glob(os.path.join(self.folder_path, '*.png'))
         png_file_count = len(png_files)
-        map_file_path = os.path.join(folder_path, map_base_name)
+        map_file_path = os.path.join(self.folder_path, map_base_name)
         global_height_maps = []
         map_resolution = []
         map_origin = []
@@ -189,7 +196,7 @@ class WaypointManagerMaprun(Node):
         for map_number in range(png_file_count):
             map_number_str = str(map_number).zfill(3)
             png_filename = os.path.join(
-                folder_path,
+                self.folder_path,
                 f'{map_file_path}_{map_number_str}.png'
             )
             print(f"png_filename: {png_filename}")
@@ -202,7 +209,7 @@ class WaypointManagerMaprun(Node):
                 continue
             global_height_maps.append(global_height_map)
             yaml_filename = os.path.join(
-                folder_path,
+                self.folder_path,
                 f'{map_file_path}_{map_number_str}.yaml'
             )
             with open(yaml_filename, 'r') as yaml_file:

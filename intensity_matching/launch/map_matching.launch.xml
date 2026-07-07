@@ -7,5 +7,6 @@
   </node>
   <!-- map matching -->
   <node pkg="intensity_matching" exec="png_map_matching">
+    <param name="folder_path" value="$(var folder_path)"/>
   </node>
 </launch>

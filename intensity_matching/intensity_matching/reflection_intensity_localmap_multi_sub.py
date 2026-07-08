@@ -224,16 +224,6 @@ class ObsBayesMap(Node):
 
         return x, y, z, intensity
 
-    def occ_model(self, d):
-        p_max = 0.95
-        p_min = 0.45
-        return 0.8 #p_min + ((p_max - p_min) * np.exp(-d / 8.0))
-
-    def free_model(self, d):
-        free_max = 0.90
-        free_min = 0.50
-        return 0.5 #free_min + ((free_max - free_min) * np.exp(-d / 10.0))
-
     def reflect_map(self, ground_msg, middle_msg, high_msg): #(self, t_stamp, ground_points, middle_points, high_points)
         #print stamp message
         t_stamp = ground_msg.header.stamp

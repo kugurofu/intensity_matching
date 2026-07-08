@@ -95,11 +95,7 @@ class ObsBayesMap(Node):
         #tf
         self.tf_broadcaster = TransformBroadcaster(self)
         self.tf_buffer = Buffer(cache_time=rclpy.duration.Duration(seconds=10.0))
-        self.tf_listener = TransformListener(
-            self.tf_buffer,
-            self,
-            spin_thread=True
-        )
+        self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=True)
 
         # Parameter
         self.grid_pixel = 1000 / 50.0
@@ -167,6 +163,9 @@ class ObsBayesMap(Node):
 
         self.last_keyframe_x = 0.0
         self.last_keyframe_y = 0.0
+        self.map_pos_diff_1 = 5 # save map dist
+        self.map_pos_diff_2 = 2 # save map dist for rotation
+        self.map_theta_diff = 40 # save map angle for rotation
 
     def timer_callback(self):
         if self.start_flag == 0:
@@ -235,16 +234,6 @@ class ObsBayesMap(Node):
         intensity = np.frombuffer(points[:, 12:16].tobytes(), dtype=np.float32)
 
         return x, y, z, intensity
-
-    def occ_model(self, d):
-        p_max = 0.95
-        p_min = 0.45
-        return 0.8 #p_min + ((p_max - p_min) * np.exp(-d / 8.0))
-
-    def free_model(self, d):
-        free_max = 0.90
-        free_min = 0.50
-        return 0.5 #free_min + ((free_max - free_min) * np.exp(-d / 10.0))
 
     def reflect_map(self, ground_msg, middle_msg, high_msg): #(self, t_stamp, ground_points, middle_points, high_points)
         #print stamp message
@@ -784,7 +773,7 @@ class ObsBayesMap(Node):
             map_pos_diff = math.sqrt((ekf_position_x - self.map_position_x_buff)**2 + (ekf_position_y - self.map_position_y_buff)**2)
             map_theta_diff = abs(ekf_theta_z -  self.map_theta_z_buff)
             
-            if ( (map_pos_diff > 5) or ((map_pos_diff > 2) and (map_theta_diff > 40)) ):
+            if ( (map_pos_diff > self.map_pos_diff_1) or ((map_pos_diff > self.map_pos_diff_2) and (map_theta_diff > self.map_theta_diff)) ):
                 self.save_flag = 1
             else:
                 self.save_flag = 0

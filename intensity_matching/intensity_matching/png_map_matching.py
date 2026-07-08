@@ -99,6 +99,7 @@ class WaypointManagerMaprun(Node):
         #waypoint init
         self.current_waypoint = 0
         self.stop_flag = 0
+        self.determine_dist = 4.5 # waypoint range
         
         #positon init odom
         self.position_x = 0.0 #[m]
@@ -138,6 +139,7 @@ class WaypointManagerMaprun(Node):
         self.last_ekf_match_y = 0.0
 
         self.match_per_threshold = 0.4 # use fusion match percentage 0.6 ground / rgb 0,35
+        self.match_dist = 1.5 # matching dist
         
         #image angle
         self.angle_offset = 0
@@ -524,9 +526,9 @@ class WaypointManagerMaprun(Node):
         
         #set judge dist
         if abs(waypoint_theta) > 90:
-            determine_dist = 4.5
+            determine_dist = self.determine_dist
         else:
-            determine_dist = 4.5
+            determine_dist = self.determine_dist
         #check if the waypoint reached
         if waypoint_dist < determine_dist:
             #self.current_waypoint += 1
@@ -931,7 +933,7 @@ class WaypointManagerMaprun(Node):
         for cand in candidates:
             dist = np.sqrt((cand["x"] - self.ref_slam_x_buff)**2 + (cand["y"] - self.ref_slam_y_buff)**2)
 
-            if dist > 1.5: # 1.0
+            if dist > self.match_dist: # 1.0
                 continue
 
             if cand["score"] > best_score:

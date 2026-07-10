@@ -27,6 +27,7 @@ from rclpy.action import ActionClient
 from my_msgs.action import StopFlag  # Actionメッセージのインポート
 from sensor_msgs.msg import Image
 import tf2_ros
+from visualization_msgs.msg import Marker, MarkerArray
 
 # C++と同じく、Node型を継承します。
 class WaypointManagerMaprun(Node):
@@ -62,7 +63,7 @@ class WaypointManagerMaprun(Node):
         )
 
         # set parameter (launch can change this parameter)
-        self.declare_parameter('folder_path', '~/ros2_ws/src/map/kitakan')
+        self.declare_parameter('folder_path', '~/ros2_ws/src/map/nakaniwa_0520')
         
         # define parameter
         folder_path = self.get_parameter('folder_path').get_parameter_value().string_value
@@ -85,7 +86,9 @@ class WaypointManagerMaprun(Node):
         self.map_match_ref_publisher = self.create_publisher(OccupancyGrid, 'reflect_map_match_ref', map_qos_profile_sub)
         self.map_match_result_publisher = self.create_publisher(OccupancyGrid, 'reflect_map_match_result', map_qos_profile_sub)
         #self.map_match_result_publisher = self.create_publisher(sensor_msgs.Image, 'reflect_map_match_result', map_qos_profile_sub)
-        
+        # Marker publisher
+        self.marker_pub = self.create_publisher(Marker, 'waypoint_markers', qos_profile)
+        self.label_marker_pub = self.create_publisher(MarkerArray, 'waypoint_labels', qos_profile)
         self.odom_ref_slam_publisher = self.create_publisher(nav_msgs.Odometry, 'odom_ref_slam', qos_profile)
         self.waypoint_path_publisher = self.create_publisher(nav_msgs.Path, 'waypoint_path', qos_profile) 
         self.map_obs_publisher = self.create_publisher(sensor_msgs.PointCloud2, 'map_obs', qos_profile) 
@@ -551,7 +554,72 @@ class WaypointManagerMaprun(Node):
         #publish
         pose_array = self.current_waypoint_msg(set_waypoint, 'odom')
         self.current_waypoint_publisher.publish(pose_array)
+
+        try:
+            self.publish_waypoint_markers()
+        except Exception as e:
+            self.get_logger().warn(f"publish_waypoint_markers error: {e}")
+    
+    def publish_waypoint_markers(self):
+        if self.waypoints is None:
+            return
         
+        npts = self.waypoints.shape[1]  # waypointの総数
+        now = self.get_clock().now().to_msg()
+
+        # ① SPHERE_LIST：全waypointを球で表示
+        # SPHERE_LISTは「1つのMarkerメッセージで複数の球をまとめて送れる」型
+        sphere = Marker()
+        sphere.header.frame_id = 'odom'
+        sphere.header.stamp = now
+        sphere.ns = 'waypoints'
+        sphere.id = 0
+        sphere.type = Marker.SPHERE_LIST
+        sphere.action = Marker.ADD
+        sphere.scale.x = 0.4          # 球の直径[m]
+        sphere.scale.y = 0.4
+        sphere.scale.z = 0.4
+        sphere.color.r = 0.0
+        sphere.color.g = 1.0          # 緑色
+        sphere.color.b = 0.0
+        sphere.color.a = 0.9          # 透明度
+        # lifetime=0で明示的に消すまで永続表示
+        sphere.lifetime = rclpy.duration.Duration(seconds=0).to_msg()
+
+        for i in range(npts):
+            p = geometry_msgs.Point()
+            p.x = float(self.waypoints[0, i])
+            p.y = float(self.waypoints[1, i])
+            p.z = 0.0
+            sphere.points.append(p)
+        
+        self.marker_pub.publish(sphere)
+
+        # ② TEXT_VIEW_FACING：各waypointの上に番号を表示
+        # MarkerArrayは「複数のMarkerをまとめて1トピックで送る」型
+        label_array = MarkerArray()
+
+        for i in range(npts):
+            label = Marker()
+            label.header.frame_id = 'odom'
+            label.header.stamp = now
+            label.ns = 'waypoint_labels'
+            label.id = i                          # 各テキストに固有ID
+            label.type = Marker.TEXT_VIEW_FACING  # 常にカメラ方向を向くテキスト
+            label.action = Marker.ADD
+            label.pose.position.x = float(self.waypoints[0, i])
+            label.pose.position.y = float(self.waypoints[1, i])
+            label.pose.position.z = 0.8           # 球の少し上に表示
+            label.scale.z = 0.5                   # テキストの高さ[m]
+            label.color.r = 1.0
+            label.color.g = 1.0
+            label.color.b = 1.0                   # 白色
+            label.color.a = 1.0
+            label.lifetime = rclpy.duration.Duration(seconds=0).to_msg()
+            label.text = str(i)                   # waypoint番号を文字列で
+            label_array.markers.append(label)
+
+        self.label_marker_pub.publish(label_array)
         
     def get_odom(self, msg):
         self.position_x = msg.pose.pose.position.x

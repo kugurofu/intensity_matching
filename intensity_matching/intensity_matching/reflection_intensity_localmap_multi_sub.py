@@ -1,6 +1,7 @@
 # ROS2
 import rclpy
 from rclpy.node import Node
+from rclpy.duration import Duration
 # ROS msgs
 import std_msgs.msg as std_msgs
 import sensor_msgs.msg as sensor_msgs
@@ -229,9 +230,8 @@ class ObsBayesMap(Node):
         t_stamp = ground_msg.header.stamp
         #print(f"t_stamp ={t_stamp}")
         t0 = time.perf_counter()
-
         try:
-            transform = self.tf_buffer.lookup_transform("odom", "livox_frame", rclpy.time.Time.from_msg(ground_msg.header.stamp))
+            transform = self.tf_buffer.lookup_transform("odom", "livox_frame", rclpy.time.Time.from_msg(ground_msg.header.stamp), timeout=Duration(seconds=0.1))
 
         except TransformException as ex:
             self.get_logger().warn(f"TF lookup failed: {ex}")

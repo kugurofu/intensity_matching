@@ -4,9 +4,11 @@
   <arg name="use_sim_time" default="true"/>
   <!-- local map -->
   <node pkg="intensity_matching" exec="reflection_intensity_localmap_multi_sub">
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
   </node>
   <!-- map matching -->
   <node pkg="intensity_matching" exec="png_map_matching">
     <param name="folder_path" value="$(var folder_path)"/>
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
   </node>
 </launch>

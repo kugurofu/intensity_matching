@@ -797,6 +797,7 @@ class ObsBayesMap(Node):
         #remove_vis[middle_global_x[remove_middle_mask], middle_global_y[remove_middle_mask]] = 100
         
         # Publish
+        '''
         grid = OccupancyGrid()
         grid.header = middle_msg.header
         grid.header.frame_id = "odom"
@@ -830,6 +831,7 @@ class ObsBayesMap(Node):
         #remove_grid.info = grid.info
         #remove_grid.data = remove_vis.flatten().tolist()
         #self.remove_map_pub.publish(remove_grid)
+        '''
         
         # Update previous pose
         self.prev_x = self.position_x

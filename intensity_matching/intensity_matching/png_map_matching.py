@@ -120,7 +120,7 @@ class WaypointManagerMaprun(Node):
         self.ekf_theta_y = 0.0 #[deg]
         self.ekf_theta_z = 0.0 #[deg]
         self.ekf_orientation_z = 0.0
-        self.ekf_orientation_w = 0.0
+        self.ekf_orientation_w = 1.0
         
         #match init
         self.odom_x_buff = 0.0
@@ -808,17 +808,18 @@ class WaypointManagerMaprun(Node):
                 self.fused_msg.header.frame_id = "odom"
                 self.fused_pub.publish(self.fused_msg)
                 if self.ekf_publish_TF:
-                    self.t.header.stamp = self.get_clock().now().to_msg()
-                    self.t.header.frame_id = "odom"
-                    self.t.child_frame_id = "base_footprint"
-                    self.t.transform.translation.x = float(fused_value[0])
-                    self.t.transform.translation.y = float(fused_value[1])
-                    self.t.transform.translation.z = 0.0
-                    self.t.transform.rotation.x = 0.0
-                    self.t.transform.rotation.y = 0.0
-                    self.t.transform.rotation.z = float(self.robot_orientationz)
-                    self.t.transform.rotation.w = float(self.robot_orientationw)
-                    self.br.sendTransform(self.t)
+                    t = TransformStamped()
+                    t.header.stamp = self.get_clock().now().to_msg()
+                    t.header.frame_id = "odom"
+                    t.child_frame_id = "base_footprint"
+                    t.transform.translation.x = float(fused_value[0])
+                    t.transform.translation.y = float(fused_value[1])
+                    t.transform.translation.z = 0.0
+                    t.transform.rotation.x = 0.0
+                    t.transform.rotation.y = 0.0
+                    t.transform.rotation.z = float(self.robot_orientationz)
+                    t.transform.rotation.w = float(self.robot_orientationw)
+                    self.br.sendTransform(t)
                     print("send tf 1")
                 #print(f"fused_value: {fused_value}")
             else:
@@ -829,18 +830,19 @@ class WaypointManagerMaprun(Node):
                 flio_q_z = self.ekf_orientation_z
                 flio_q_w = self.ekf_orientation_w
                 if self.ekf_publish_TF:
-                        self.t.header.stamp = self.get_clock().now().to_msg()
-                        self.t.header.frame_id = "odom"
-                        self.t.child_frame_id = "base_footprint"
-                        self.t.transform.translation.x = ekf_position_x
-                        self.t.transform.translation.y = ekf_position_y
-                        self.t.transform.translation.z = 0.0
-                        self.t.transform.rotation.x = 0.0
-                        self.t.transform.rotation.y = 0.0
-                        self.t.transform.rotation.z = flio_q_z
-                        self.t.transform.rotation.w = flio_q_w
-                        self.br.sendTransform(self.t)
-                        print("send tf 3")
+                    t = TransformStamped()
+                    t.header.stamp = self.get_clock().now().to_msg()
+                    t.header.frame_id = "odom"
+                    t.child_frame_id = "base_footprint"
+                    t.transform.translation.x = ekf_position_x
+                    t.transform.translation.y = ekf_position_y
+                    t.transform.translation.z = 0.0
+                    t.transform.rotation.x = 0.0
+                    t.transform.rotation.y = 0.0
+                    t.transform.rotation.z = flio_q_z
+                    t.transform.rotation.w = flio_q_w
+                    self.br.sendTransform(t)
+                    print("send tf 3")
         else:
             print("test 2")
             ekf_position_x = self.ekf_position_x
@@ -849,18 +851,19 @@ class WaypointManagerMaprun(Node):
             flio_q_z = self.ekf_orientation_z
             flio_q_w = self.ekf_orientation_w
             if self.ekf_publish_TF:
-                    self.t.header.stamp = self.get_clock().now().to_msg()
-                    self.t.header.frame_id = "odom"
-                    self.t.child_frame_id = "base_footprint"
-                    self.t.transform.translation.x = ekf_position_x
-                    self.t.transform.translation.y = ekf_position_y
-                    self.t.transform.translation.z = 0.0
-                    self.t.transform.rotation.x = 0.0
-                    self.t.transform.rotation.y = 0.0
-                    self.t.transform.rotation.z = flio_q_z
-                    self.t.transform.rotation.w = flio_q_w
-                    self.br.sendTransform(self.t)
-                    print("send tf 2")
+                t = TransformStamped()
+                t.header.stamp = self.get_clock().now().to_msg()
+                t.header.frame_id = "odom"
+                t.child_frame_id = "base_footprint"
+                t.transform.translation.x = ekf_position_x
+                t.transform.translation.y = ekf_position_y
+                t.transform.translation.z = 0.0
+                t.transform.rotation.x = 0.0
+                t.transform.rotation.y = 0.0
+                t.transform.rotation.z = flio_q_z
+                t.transform.rotation.w = flio_q_w
+                self.br.sendTransform(t)
+                print("send tf 2")
         
         #print(f"GpsXY = {self.GpsXY}")
 

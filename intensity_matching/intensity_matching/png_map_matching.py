@@ -64,9 +64,11 @@ class WaypointManagerMaprun(Node):
 
         # set parameter (launch can change this parameter)
         self.declare_parameter('folder_path', '~/ros2_ws/src/map/nakaniwa_0520')
+        self.declare_parameter('waypoint_start_index', 0)  # start waypoint number
         
         # define parameter
         folder_path = self.get_parameter('folder_path').get_parameter_value().string_value
+        self.waypoint_start_index = self.get_parameter('waypoint_start_index').get_parameter_value().integer_value
 
         # Subscriptionを作成。
         self.subscription = self.create_subscription(nav_msgs.Odometry,'/odom/combine', self.get_odom, qos_profile_sub)
@@ -100,7 +102,7 @@ class WaypointManagerMaprun(Node):
         
         #パラメータ
         #waypoint init
-        self.current_waypoint = 0
+        self.current_waypoint = self.waypoint_start_index # init 0
         self.stop_flag = 0
         self.determine_dist = 4.5 # waypoint range
         

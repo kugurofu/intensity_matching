@@ -200,27 +200,32 @@ class WaypointManagerMaprun(Node):
         map_origin = []
         map_occupied_thresh = []
         map_free_thresh = []
+        reflect_map_obs_matrices = []
         for map_number in range(png_file_count):
             map_number_str = str(map_number).zfill(3)
-            png_filename = os.path.join(
-                self.folder_path,
-                f'{map_file_path}_{map_number_str}.png'
-            )
+            png_filename = os.path.join(self.folder_path, f'{map_file_path}_{map_number_str}.png')
             print(f"png_filename: {png_filename}")
-            global_height_map = cv2.imread(
-                png_filename,
-                cv2.IMREAD_COLOR
-            )
+            global_height_map = cv2.imread(png_filename, cv2.IMREAD_COLOR)
             if global_height_map is None:
                 print(f"failed load: {png_filename}")
                 continue
             global_height_maps.append(global_height_map)
-            yaml_filename = os.path.join(
-                self.folder_path,
-                f'{map_file_path}_{map_number_str}.yaml'
-            )
+            yaml_filename = os.path.join(self.folder_path, f'{map_file_path}_{map_number_str}.yaml')
             with open(yaml_filename, 'r') as yaml_file:
                 map_yaml_data = yaml.safe_load(yaml_file)
+            #load jpeg
+            jpeg_filename = os.path.join(self.folder_path, f'{map_file_path}_{map_number_str}' + ".jpeg")
+            reflect_map_obs = cv2.imread(jpeg_filename)
+            #red_judge1 = reflect_map_obs[:,:,0] < 100
+            #red_judge2 = reflect_map_obs[:,:,2] > 200
+            white = (
+                (reflect_map_obs[:, :, 0] > 200) &  # B
+                (reflect_map_obs[:, :, 1] > 200) &  # G
+                (reflect_map_obs[:, :, 2] > 200)    # R
+            )
+            #reflect_map_obs_data = red_judge1 * red_judge2 * 100
+            reflect_map_obs_data = white.astype(np.uint8) * 100
+            reflect_map_obs_matrices.append(reflect_map_obs_data)
             map_resolution.append(map_yaml_data['resolution'])
             map_origin.append(map_yaml_data['origin'])
             map_occupied_thresh.append(map_yaml_data['occupied_thresh'])
@@ -230,6 +235,7 @@ class WaypointManagerMaprun(Node):
         self.global_reflect_map_origin = np.stack(map_origin)
         self.global_reflect_map_occupied_thresh = np.stack(map_occupied_thresh)
         self.global_reflect_map_free_thresh = np.stack(map_free_thresh)
+        self.reflect_map_obs_matrices = np.stack(reflect_map_obs_matrices)
         wp_x = []
         wp_y = []
         wp_z = []
@@ -405,9 +411,11 @@ class WaypointManagerMaprun(Node):
             ref_slam_x = ekf_match_position_x
             ref_slam_y = ekf_match_position_y
             ref_slam_xyz = np.array([ref_slam_x, ref_slam_y, 0.0])
+            map_obs_set = 1
         else:
             ref_slam_x = ref_slam_xyz[0]
             ref_slam_y = ref_slam_xyz[1]
+            map_obs_set = 0
         self.ref_slam_x_buff = ref_slam_x
         self.ref_slam_y_buff = ref_slam_y
         self.ref_slam_diff = [ref_slam_x - ekf_match_position_x, ref_slam_y - ekf_match_position_y, 0]
@@ -433,6 +441,28 @@ class WaypointManagerMaprun(Node):
         #print(f"GpsXY = {self.GpsXY}")
         waypoint_path = path_msg(self.waypoints, t_stamp, 'odom')
         self.waypoint_path_publisher.publish(waypoint_path) 
+
+        ########## map obs set ############
+        resolution = self.global_reflect_map_resolution[self.current_waypoint]
+        map_obs = self.reflect_map_obs_matrices[self.current_waypoint]
+        #rotate image
+        map_obs = cv2.normalize(map_obs, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        #map_obs = self.rotate_image(map_obs, -self.angle_offset)
+        map_obs_index = np.where(map_obs>0)
+        if len(map_obs_index[0]) >0:
+            if map_obs_set == 1:
+                ### ekf pos ###
+                map_obs_x =  map_obs_index[1] * resolution - MAP_RANGE_GL + position_map[0] - self.ref_slam_diff[0]
+                map_obs_y = -map_obs_index[0] * resolution + MAP_RANGE_GL + position_map[1] - self.ref_slam_diff[1]
+            else:
+                ### global map pos ###
+                map_obs_x =  map_obs_index[1] * resolution - MAP_RANGE_GL + position_map[0] #- self.ref_slam_diff[0]
+                map_obs_y = -map_obs_index[0] * resolution + MAP_RANGE_GL + position_map[1] #- self.ref_slam_diff[1]
+            map_obs_z = np.zeros([1,len(map_obs_x)]) 
+            map_obs_intensity = np.zeros([1,len(map_obs_x)]) 
+            map_obs_matrix = np.vstack((map_obs_x, map_obs_y, map_obs_z, map_obs_intensity))
+            map_obs_msg = point_cloud_intensity_msg(map_obs_matrix.T, t_stamp, 'odom')
+            self.map_obs_publisher.publish(map_obs_msg) 
 
     def extract_layer_maps(self, reflect_map_obs):
         # OpenCVはBGR順

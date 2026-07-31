@@ -63,7 +63,7 @@ class WaypointManagerMaprun(Node):
         )
 
         # set parameter (launch can change this parameter)
-        self.declare_parameter('folder_path', '~/ros2_ws/src/map/nakaniwa_0520')
+        self.declare_parameter('folder_path', '~/ros2_ws/src/map/nakaniwa_0728')
         self.declare_parameter('waypoint_start_index', 0)  # start waypoint number
         
         # define parameter
@@ -84,6 +84,7 @@ class WaypointManagerMaprun(Node):
         
         # Publisherを作成
         self.current_waypoint_publisher = self.create_publisher(geometry_msgs.PoseArray, 'current_waypoint', qos_profile) #set publish pcd topic name
+        self.waypoint_number_pub = self.create_publisher(std_msgs.Int32, 'waypoint_number', qos_profile)
         self.map_match_local_publisher = self.create_publisher(OccupancyGrid, 'reflect_map_match_local', map_qos_profile_sub)
         self.map_match_ref_publisher = self.create_publisher(OccupancyGrid, 'reflect_map_match_ref', map_qos_profile_sub)
         self.map_match_result_publisher = self.create_publisher(OccupancyGrid, 'reflect_map_match_result', map_qos_profile_sub)
@@ -240,22 +241,10 @@ class WaypointManagerMaprun(Node):
         wp_y = []
         wp_z = []
         for wp_number in range(self.global_height_maps.shape[0]):
-            x_offset = (
-                len(self.global_height_maps[wp_number][0])
-                * self.global_reflect_map_resolution[0]
-            ) / 2
-            y_offset = (
-                len(self.global_height_maps[wp_number][1])
-                * self.global_reflect_map_resolution[0]
-            ) / 2
-            x = (
-                self.global_reflect_map_origin[wp_number][0]
-                + x_offset
-            )
-            y = (
-                self.global_reflect_map_origin[wp_number][1]
-                + y_offset
-            )
+            x_offset = (len(self.global_height_maps[wp_number][0]) * self.global_reflect_map_resolution[0]) / 2
+            y_offset = (len(self.global_height_maps[wp_number][1]) * self.global_reflect_map_resolution[0]) / 2
+            x = (self.global_reflect_map_origin[wp_number][0] + x_offset)
+            y = (self.global_reflect_map_origin[wp_number][1] + y_offset)
             z = self.global_reflect_map_origin[wp_number][2]
             wp_x.append(x)
             wp_y.append(y)
@@ -586,6 +575,7 @@ class WaypointManagerMaprun(Node):
         #publish
         pose_array = self.current_waypoint_msg(set_waypoint, 'odom')
         self.current_waypoint_publisher.publish(pose_array)
+        self.waypoint_number_pub.publish(std_msgs.Int32(data=self.current_waypoint))
 
         try:
             self.publish_waypoint_markers()

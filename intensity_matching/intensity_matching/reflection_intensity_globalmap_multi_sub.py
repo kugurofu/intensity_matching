@@ -719,8 +719,8 @@ class ObsBayesMap(Node):
         #map_data_gl_set = grid_map_set(self.pcd_ground_buff[1,:], self.pcd_ground_buff[0,:], ground_reflect_conv, position, self.ground_pixel, self.MAP_RANGE_GL)
         t2=time.perf_counter()
         map_data_ground_gl_set = grid_map_set(ekf_ground_set[1,:], ekf_ground_set[0,:], ground_reflect_conv, ekf_position, self.ground_pixel, self.MAP_RANGE_GL)
-        map_data_middle_gl_set = grid_map_set(ekf_middle_set[1,:], ekf_middle_set[0,:], middle_reflect_conv, position, self.ground_pixel, self.MAP_RANGE_GL)
-        map_data_high_gl_set = grid_map_set(ekf_high_set[1,:], ekf_high_set[0,:], high_reflect_conv, position, self.ground_pixel, self.MAP_RANGE_GL)
+        map_data_middle_gl_set = grid_map_set(ekf_middle_set[1,:], ekf_middle_set[0,:], middle_reflect_conv, ekf_position, self.ground_pixel, self.MAP_RANGE_GL)
+        map_data_high_gl_set = grid_map_set(ekf_high_set[1,:], ekf_high_set[0,:], high_reflect_conv, ekf_position, self.ground_pixel, self.MAP_RANGE_GL)
         #print("global_grid", time.perf_counter()-t2)
         #print("total", time.perf_counter()-t0)
 

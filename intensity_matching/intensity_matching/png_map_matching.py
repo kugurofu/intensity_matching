@@ -549,10 +549,14 @@ class WaypointManagerMaprun(Node):
         #self.get_logger().info('####### waypoint_theta : %f #######' % (waypoint_theta))
         
         #set judge dist
-        if abs(waypoint_theta) > 90:
-            determine_dist = self.determine_dist
+        if 39 <= self.current_waypoint <= 42:
+            determine_dist = 0.5
         else:
             determine_dist = self.determine_dist
+        #if abs(waypoint_theta) > 90:
+        #    determine_dist = self.determine_dist
+        #else:
+        #    determine_dist = self.determine_dist
         #check if the waypoint reached
         if waypoint_dist < determine_dist:
             #self.current_waypoint += 1

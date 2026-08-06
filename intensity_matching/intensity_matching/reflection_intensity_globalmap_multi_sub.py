@@ -60,7 +60,7 @@ class ObsBayesMap(Node):
         save_dir = self.get_parameter('save_dir').get_parameter_value().string_value
 
         # Subscriber
-        self.local_odom_sub = self.create_subscription(nav_msgs.Odometry,'/fusion/odom',self.get_local_odom, qos_profile_sub)
+        self.local_odom_sub = self.create_subscription(nav_msgs.Odometry,'/odom/combine',self.get_local_odom, qos_profile_sub)
         self.global_odom_sub = self.create_subscription(nav_msgs.Odometry,'/fusion/odom', self.get_global_odom, qos_profile_sub)
         self.pcd_ground_sub = message_filters.Subscriber(self, sensor_msgs.PointCloud2, '/pcd_segment_ground')
         self.pcd_middle_sub = message_filters.Subscriber(self, sensor_msgs.PointCloud2, '/pcd_segment_middle')

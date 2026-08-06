@@ -73,7 +73,7 @@ class WaypointManagerMaprun(Node):
         # Subscriptionを作成。
         self.subscription = self.create_subscription(nav_msgs.Odometry,'/odom/combine', self.get_odom, qos_profile_sub)
         #self.subscription = self.create_subscription(nav_msgs.Odometry,'/odom_fast', self.get_odom, qos_profile_sub)
-        self.subscription = self.create_subscription(nav_msgs.Odometry,'/odom/combine', self.get_ekf_odom, qos_profile_sub)
+        self.subscription = self.create_subscription(nav_msgs.Odometry,'/fusion/odom', self.get_ekf_odom, qos_profile_sub)
         self.subscription = self.create_subscription(Image,'/rgb_reflect_map_local', self.get_local_height_map, qos_profile_sub)
         self.bridge = CvBridge()
         #self.subscription = self.create_subscription(Image,'/local_height_map',self.get_local_height_map,qos_profile_sub)
@@ -95,6 +95,7 @@ class WaypointManagerMaprun(Node):
         self.odom_ref_slam_publisher = self.create_publisher(nav_msgs.Odometry, 'odom_ref_slam', qos_profile)
         self.waypoint_path_publisher = self.create_publisher(nav_msgs.Path, 'waypoint_path', qos_profile) 
         self.map_obs_publisher = self.create_publisher(sensor_msgs.PointCloud2, 'map_obs', qos_profile) 
+        self.goal_sub = self.create_subscription(geometry_msgs.PoseStamped, '/goal_pose', self.goal_pose_callback, qos_profile)
         
         self.fused_pub = self.create_publisher(nav_msgs.Odometry, '/odom_ekf_match', qos_profile)
         self.fused_msg = nav_msgs.Odometry()
@@ -105,7 +106,7 @@ class WaypointManagerMaprun(Node):
         #waypoint init
         self.current_waypoint = self.waypoint_start_index # init 0
         self.stop_flag = 0
-        self.determine_dist = 4.5 # waypoint range
+        self.waypoint_range = 4.5 # waypoint range
         
         #positon init odom
         self.position_x = 0.0 #[m]
@@ -152,7 +153,7 @@ class WaypointManagerMaprun(Node):
 
         # tf
         self.t = TransformStamped()
-        self.ekf_publish_TF = True
+        self.ekf_publish_TF = False
         
         ## ekf
         self.GTheta = None
@@ -268,6 +269,42 @@ class WaypointManagerMaprun(Node):
         # キャッシュのクリアとして、Bufferのインスタンスを再作成 
         self.br = tf2_ros.TransformBroadcaster(self) 
         self.get_logger().info('TransformBroadcaster has been reset')
+    
+    def goal_pose_callback(self, msg):
+        x = msg.pose.position.x
+        y = msg.pose.position.y
+        z = msg.pose.position.z
+        qz = msg.pose.orientation.z
+        qw = msg.pose.orientation.w
+
+        xyz = np.vstack((x, y, z))
+        waypoint_range = np.vstack((self.waypoint_range, 0.0, 0.0))
+        yaw = self.orientation_to_yaw(qz, qw) * 180 / math.pi
+        xyz_range, _ = rotation_xyz(waypoint_range, 0, 0, yaw)
+        next_x = xyz[0] + xyz_range[0]
+        next_y = xyz[1] + xyz_range[1]
+        next_z = xyz[2] + xyz_range[2]
+        next_xyz = np.vstack((next_x,next_y,next_z))
+        
+        if self.waypoints_local_set == 0:
+            self.current_waypoint = 0;
+            self.waypoints_array = xyz;
+            self.waypoints_local_set = 1;
+        else:
+            self.waypoints_array = np.insert(self.waypoints_array, len(self.waypoints_array[0,:]), xyz.T, axis=1)
+
+        #full_waypoints = np.concatenate([self.xy_points], axis=0)
+        #self.waypoints_array = full_waypoints.T
+        self.current_waypoint = self.waypoint_start_index
+        self.get_logger().info(f"Start index set: {self.current_waypoint}")
+
+        # waypointが確定したのでmarkerを表示
+        self.waypoints_ready = True
+        self.publish_waypoint_markers()
+        
+        self.get_logger().info(f"Received goal: x={x:.3f}, y={y:.3f}, yaw={yaw:.3f} deg")    
+        self.get_logger().info(f"self.waypoints_array:{self.waypoints_array}")    
+        self.get_logger().info(f"xyz_range:{xyz_range}")    
 
     def get_local_height_map(self, msg):
         t_stamp = msg.header.stamp
@@ -550,15 +587,15 @@ class WaypointManagerMaprun(Node):
         
         #set judge dist
         if 39 <= self.current_waypoint <= 42:
-            determine_dist = 0.5
+            waypoint_range = 4.5
         else:
-            determine_dist = self.determine_dist
+            waypoint_range = self.waypoint_range
         #if abs(waypoint_theta) > 90:
-        #    determine_dist = self.determine_dist
+        #    waypoint_range = self.waypoint_range
         #else:
-        #    determine_dist = self.determine_dist
+        #    waypoint_range = self.waypoint_range
         #check if the waypoint reached
-        if waypoint_dist < determine_dist:
+        if waypoint_dist < waypoint_range:
             #self.current_waypoint += 1
             if self.current_waypoint < len(self.waypoints[0,:])-1:
                 self.current_waypoint += 1

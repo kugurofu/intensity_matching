@@ -147,6 +147,7 @@ class WaypointManagerMaprun(Node):
 
         self.match_per_threshold = 0.4 # use fusion match percentage 0.6 ground / rgb 0,35
         self.match_dist = 1.5 # matching dist
+        self.odom_error_threshold = 0.5
         
         #image angle
         self.angle_offset = 0
@@ -467,6 +468,31 @@ class WaypointManagerMaprun(Node):
         odom_ref_slam_msg = odometry_msg(ref_slam_x, ref_slam_y, position_z, theta_x, theta_y, theta_z + self.angle_offset, t_stamp, 'odom')
         #self.odom_ref_slam_publisher.publish(odom_ref_slam_msg)
         if match_percentage > self.match_per_threshold: # high priority matching 0.35? 0.4?
+            delta_x = position_x - self.last_ekf_match_x
+            delta_y = position_y - self.last_ekf_match_y
+            estimate_x = self.last_match_x + delta_x
+            estimate_y = self.last_match_y + delta_y
+            match_odom_error = np.sqrt((ref_slam_x - estimate_x)**2 + (ref_slam_y - estimate_y)**2)
+            self.get_logger().info(f"match/odom error = {match_odom_error:.3f} m")
+            if match_odom_error > self.odom_error_threshold: # high priority matching 0.35? 0.4?
+                self.GpsXY = np.array([ref_slam_x, ref_slam_y ])
+                self.get_logger().info(f"!!!!!high priority matching: {match_percentage}!!!!!")
+                self.last_match_x = ref_slam_x
+                self.last_match_y = ref_slam_y
+                self.last_ekf_match_x = position_x
+                self.last_ekf_match_y= position_y
+                self.odom_ref_slam_publisher.publish(odom_ref_slam_msg)
+            else:
+                self.GpsXY = np.array([estimate_x, estimate_y])
+                self.get_logger().info(f"MISMATCH: score={match_percentage:.3f}, "f"error={match_odom_error:.3f} m")
+        else:
+            delta_x = position_x - self.last_ekf_match_x
+            delta_y = position_y - self.last_ekf_match_y
+            estimate_x = self.last_match_x + delta_x
+            estimate_y = self.last_match_y + delta_y
+            self.GpsXY = np.array([estimate_x, estimate_y])
+        '''
+        if match_percentage > self.match_per_threshold: # high priority matching 0.35? 0.4?
             self.GpsXY = np.array([ref_slam_x, ref_slam_y ])
             self.get_logger().info(f"!!!!!high priority matching: {match_percentage}!!!!!")
             self.last_match_x = ref_slam_x
@@ -481,6 +507,7 @@ class WaypointManagerMaprun(Node):
             estimate_y = self.last_match_y + delta_y
             self.GpsXY = np.array([estimate_x, estimate_y])
             #self.GpsXY = np.array([position_x, position_y ])
+        '''
         #self.robot_yaw = (theta_z + self.angle_offset) / 180 * math.pi
         self.robot_yaw = (ekf_theta_z + self.angle_offset) / 180 * math.pi
         #self.robot_yaw = (ekf_theta_z) / 180 * math.pi

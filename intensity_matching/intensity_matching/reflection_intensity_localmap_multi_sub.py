@@ -1095,9 +1095,9 @@ def grid_map_set(map_x, map_y, data, position, map_pixel, map_range):
     #print(f"map_data_xy ={len(map_data_xy)}")
     #print(f"data[map_ind] ={len(data[map_ind])}")
     
-    data_max = np.max(data[map_ind]) # ?
+    #data_max = np.max(data[map_ind]) # ?
     #print(f"data_max ={data_max}")
-    map_data_xy_max = np.max(map_data_xy)
+    #map_data_xy_max = np.max(map_data_xy)
     #print(f"map_data_xy_max ={map_data_xy_max}")
     
     map_data[0,map_data_xy] = data[map_ind]

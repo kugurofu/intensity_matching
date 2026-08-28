@@ -273,6 +273,7 @@ class WaypointManagerMaprun(Node):
             [  999,   999,   999,   999, 0.0, 0.0] ]) #
         self.stop_num = 0;
         self.last_stop_waypoint = -1
+        self.waypoints_local_set = 0
     
     def reset_tf_buffer(self): 
         # キャッシュのクリアとして、Bufferのインスタンスを再作成 
@@ -297,10 +298,10 @@ class WaypointManagerMaprun(Node):
         
         if self.waypoints_local_set == 0:
             self.current_waypoint = 0;
-            self.waypoints_array = xyz;
+            self.waypoints = xyz;
             self.waypoints_local_set = 1;
         else:
-            self.waypoints_array = np.insert(self.waypoints_array, len(self.waypoints_array[0,:]), xyz.T, axis=1)
+            self.waypoints = np.insert(self.waypoints, len(self.waypoints[0,:]), xyz.T, axis=1)
 
         #full_waypoints = np.concatenate([self.xy_points], axis=0)
         #self.waypoints_array = full_waypoints.T
@@ -312,8 +313,12 @@ class WaypointManagerMaprun(Node):
         self.publish_waypoint_markers()
         
         self.get_logger().info(f"Received goal: x={x:.3f}, y={y:.3f}, yaw={yaw:.3f} deg")    
-        self.get_logger().info(f"self.waypoints_array:{self.waypoints_array}")    
+        self.get_logger().info(f"self.waypoints_array:{self.waypoints}")    
         self.get_logger().info(f"xyz_range:{xyz_range}")    
+    
+    def orientation_to_yaw(self, z, w):
+        yaw = np.arctan2(2.0 * (w * z), 1.0 - 2.0 * (z ** 2))
+        return yaw
 
     def get_local_height_map(self, msg):
         t_stamp = msg.header.stamp
@@ -467,6 +472,7 @@ class WaypointManagerMaprun(Node):
         self.ref_slam_diff = [ref_slam_x - ekf_match_position_x, ref_slam_y - ekf_match_position_y, 0]
         odom_ref_slam_msg = odometry_msg(ref_slam_x, ref_slam_y, position_z, theta_x, theta_y, theta_z + self.angle_offset, t_stamp, 'odom')
         #self.odom_ref_slam_publisher.publish(odom_ref_slam_msg)
+        
         if match_percentage > self.match_per_threshold: # high priority matching 0.35? 0.4?
             delta_x = position_x - self.last_ekf_match_x
             delta_y = position_y - self.last_ekf_match_y
@@ -474,7 +480,7 @@ class WaypointManagerMaprun(Node):
             estimate_y = self.last_match_y + delta_y
             match_odom_error = np.sqrt((ref_slam_x - estimate_x)**2 + (ref_slam_y - estimate_y)**2)
             self.get_logger().info(f"match/odom error = {match_odom_error:.3f} m")
-            if match_odom_error > self.odom_error_threshold: # high priority matching 0.35? 0.4?
+            if match_odom_error < self.odom_error_threshold: # high priority matching 0.35? 0.4?
                 self.GpsXY = np.array([ref_slam_x, ref_slam_y ])
                 self.get_logger().info(f"!!!!!high priority matching: {match_percentage}!!!!!")
                 self.last_match_x = ref_slam_x

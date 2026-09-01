@@ -618,8 +618,8 @@ class WaypointManagerMaprun(Node):
         #position_x=self.ekf_position_x; position_y=self.ekf_position_y; 
         theta_x=self.theta_x; theta_y=self.theta_y; theta_z=self.theta_z #-self.angle_offset;
         ###### ekf position ######
-        position_x=self.ekf_position_x; position_y=self.ekf_position_y; 
-        #position_x=self.fused_msg.pose.pose.position.x; position_y=self.fused_msg.pose.pose.position.y; 
+        #position_x=self.ekf_position_x; position_y=self.ekf_position_y; 
+        position_x=self.fused_msg.pose.pose.position.x; position_y=self.fused_msg.pose.pose.position.y; 
         #theta_x=self.ekf_theta_x; theta_y=self.ekf_theta_y; theta_z=self.ekf_theta_z-self.angle_offset;
         flio_q_x = self.fused_msg.pose.pose.orientation.x
         flio_q_y = self.fused_msg.pose.pose.orientation.y

@@ -107,6 +107,10 @@ class WaypointManagerMaprun(Node):
         self.current_waypoint = self.waypoint_start_index # init 0
         self.stop_flag = 0
         self.waypoint_range = 4.5 # waypoint range
+        self.waypoint_offset = {
+            2: [2.0, 0.0],   # waypoint_number 2だけX方向に+2 m
+            14: [0.0, -2.0],  # waypoint_number 14だけy方向に-2 m
+        }
         
         #positon init odom
         self.position_x = 0.0 #[m]
@@ -248,6 +252,10 @@ class WaypointManagerMaprun(Node):
             x = (self.global_reflect_map_origin[wp_number][0] + x_offset)
             y = (self.global_reflect_map_origin[wp_number][1] + y_offset)
             z = self.global_reflect_map_origin[wp_number][2]
+            # waypointごとの追加オフセット
+            if wp_number in self.waypoint_offset:
+                x += self.waypoint_offset[wp_number][0]
+                y += self.waypoint_offset[wp_number][1]
             wp_x.append(x)
             wp_y.append(y)
             wp_z.append(z)
@@ -447,6 +455,7 @@ class WaypointManagerMaprun(Node):
                         self.stop = True
                         self.get_logger().info("Stop flag reset to True")
                         self.send_action_request()
+                        self.current_waypoint += 1
                         self.last_stop_waypoint = self.current_waypoint
                         self.stop_num = self.stop_num + 1;
             match_percentage = best_candidate["score"] # score / total_score
@@ -609,8 +618,8 @@ class WaypointManagerMaprun(Node):
         #position_x=self.ekf_position_x; position_y=self.ekf_position_y; 
         theta_x=self.theta_x; theta_y=self.theta_y; theta_z=self.theta_z #-self.angle_offset;
         ###### ekf position ######
-        #position_x=self.ekf_position_x; position_y=self.ekf_position_y; 
-        position_x=self.fused_msg.pose.pose.position.x; position_y=self.fused_msg.pose.pose.position.y; 
+        position_x=self.ekf_position_x; position_y=self.ekf_position_y; 
+        #position_x=self.fused_msg.pose.pose.position.x; position_y=self.fused_msg.pose.pose.position.y; 
         #theta_x=self.ekf_theta_x; theta_y=self.ekf_theta_y; theta_z=self.ekf_theta_z-self.angle_offset;
         flio_q_x = self.fused_msg.pose.pose.orientation.x
         flio_q_y = self.fused_msg.pose.pose.orientation.y

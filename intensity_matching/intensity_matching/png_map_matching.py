@@ -63,10 +63,12 @@ class WaypointManagerMaprun(Node):
         )
 
         # set parameter (launch can change this parameter)
-        self.declare_parameter('folder_path', '~/ros2_ws/src/map/nakaniwa_0520')
+        self.declare_parameter('folder_path', '~/ros2_ws/src/map/nakaniwa_0728')
+        self.declare_parameter('waypoint_start_index', 0)  # start waypoint number
         
         # define parameter
         folder_path = self.get_parameter('folder_path').get_parameter_value().string_value
+        self.waypoint_start_index = self.get_parameter('waypoint_start_index').get_parameter_value().integer_value
 
         # Subscriptionを作成。
         self.subscription = self.create_subscription(nav_msgs.Odometry,'/odom/combine', self.get_odom, qos_profile_sub)
@@ -82,9 +84,10 @@ class WaypointManagerMaprun(Node):
         
         # Publisherを作成
         self.current_waypoint_publisher = self.create_publisher(geometry_msgs.PoseArray, 'current_waypoint', qos_profile) #set publish pcd topic name
-        self.map_match_local_publisher = self.create_publisher(OccupancyGrid, 'reflect_map_match_local', map_qos_profile_sub)
-        self.map_match_ref_publisher = self.create_publisher(OccupancyGrid, 'reflect_map_match_ref', map_qos_profile_sub)
-        self.map_match_result_publisher = self.create_publisher(OccupancyGrid, 'reflect_map_match_result', map_qos_profile_sub)
+        self.waypoint_number_pub = self.create_publisher(std_msgs.Int32, 'waypoint_number', qos_profile)
+        self.scoremap_ground_publisher = self.create_publisher(OccupancyGrid, 'scoremap_ground', map_qos_profile_sub)
+        self.scoremap_mid_publisher = self.create_publisher(OccupancyGrid, 'scoremap_mid', map_qos_profile_sub)
+        self.scoremap_high_publisher = self.create_publisher(OccupancyGrid, 'scoremap_high', map_qos_profile_sub)
         #self.map_match_result_publisher = self.create_publisher(sensor_msgs.Image, 'reflect_map_match_result', map_qos_profile_sub)
         # Marker publisher
         self.marker_pub = self.create_publisher(Marker, 'waypoint_markers', qos_profile)
@@ -92,6 +95,7 @@ class WaypointManagerMaprun(Node):
         self.odom_ref_slam_publisher = self.create_publisher(nav_msgs.Odometry, 'odom_ref_slam', qos_profile)
         self.waypoint_path_publisher = self.create_publisher(nav_msgs.Path, 'waypoint_path', qos_profile) 
         self.map_obs_publisher = self.create_publisher(sensor_msgs.PointCloud2, 'map_obs', qos_profile) 
+        self.goal_sub = self.create_subscription(geometry_msgs.PoseStamped, '/goal_pose', self.goal_pose_callback, qos_profile)
         
         self.fused_pub = self.create_publisher(nav_msgs.Odometry, '/odom_ekf_match', qos_profile)
         self.fused_msg = nav_msgs.Odometry()
@@ -100,9 +104,13 @@ class WaypointManagerMaprun(Node):
         
         #パラメータ
         #waypoint init
-        self.current_waypoint = 0
+        self.current_waypoint = self.waypoint_start_index # init 0
         self.stop_flag = 0
-        self.determine_dist = 4.5 # waypoint range
+        self.waypoint_range = 4.5 # waypoint range
+        self.waypoint_offset = {
+            2: [2.0, 0.0],   # waypoint_number 2だけX方向に+2 m
+            14: [0.0, -2.0],  # waypoint_number 14だけy方向に-2 m
+        }
         
         #positon init odom
         self.position_x = 0.0 #[m]
@@ -143,13 +151,14 @@ class WaypointManagerMaprun(Node):
 
         self.match_per_threshold = 0.4 # use fusion match percentage 0.6 ground / rgb 0,35
         self.match_dist = 1.5 # matching dist
+        self.odom_error_threshold = 0.5
         
         #image angle
         self.angle_offset = 0
 
         # tf
         self.t = TransformStamped()
-        self.ekf_publish_TF = True
+        self.ekf_publish_TF = False
         
         ## ekf
         self.GTheta = None
@@ -198,27 +207,32 @@ class WaypointManagerMaprun(Node):
         map_origin = []
         map_occupied_thresh = []
         map_free_thresh = []
+        reflect_map_obs_matrices = []
         for map_number in range(png_file_count):
             map_number_str = str(map_number).zfill(3)
-            png_filename = os.path.join(
-                self.folder_path,
-                f'{map_file_path}_{map_number_str}.png'
-            )
+            png_filename = os.path.join(self.folder_path, f'{map_file_path}_{map_number_str}.png')
             print(f"png_filename: {png_filename}")
-            global_height_map = cv2.imread(
-                png_filename,
-                cv2.IMREAD_COLOR
-            )
+            global_height_map = cv2.imread(png_filename, cv2.IMREAD_COLOR)
             if global_height_map is None:
                 print(f"failed load: {png_filename}")
                 continue
             global_height_maps.append(global_height_map)
-            yaml_filename = os.path.join(
-                self.folder_path,
-                f'{map_file_path}_{map_number_str}.yaml'
-            )
+            yaml_filename = os.path.join(self.folder_path, f'{map_file_path}_{map_number_str}.yaml')
             with open(yaml_filename, 'r') as yaml_file:
                 map_yaml_data = yaml.safe_load(yaml_file)
+            #load jpeg
+            jpeg_filename = os.path.join(self.folder_path, f'{map_file_path}_{map_number_str}' + ".jpeg")
+            reflect_map_obs = cv2.imread(jpeg_filename)
+            #red_judge1 = reflect_map_obs[:,:,0] < 100
+            #red_judge2 = reflect_map_obs[:,:,2] > 200
+            white = (
+                (reflect_map_obs[:, :, 0] > 200) &  # B
+                (reflect_map_obs[:, :, 1] > 200) &  # G
+                (reflect_map_obs[:, :, 2] > 200)    # R
+            )
+            #reflect_map_obs_data = red_judge1 * red_judge2 * 100
+            reflect_map_obs_data = white.astype(np.uint8) * 100
+            reflect_map_obs_matrices.append(reflect_map_obs_data)
             map_resolution.append(map_yaml_data['resolution'])
             map_origin.append(map_yaml_data['origin'])
             map_occupied_thresh.append(map_yaml_data['occupied_thresh'])
@@ -228,27 +242,20 @@ class WaypointManagerMaprun(Node):
         self.global_reflect_map_origin = np.stack(map_origin)
         self.global_reflect_map_occupied_thresh = np.stack(map_occupied_thresh)
         self.global_reflect_map_free_thresh = np.stack(map_free_thresh)
+        self.reflect_map_obs_matrices = np.stack(reflect_map_obs_matrices)
         wp_x = []
         wp_y = []
         wp_z = []
         for wp_number in range(self.global_height_maps.shape[0]):
-            x_offset = (
-                len(self.global_height_maps[wp_number][0])
-                * self.global_reflect_map_resolution[0]
-            ) / 2
-            y_offset = (
-                len(self.global_height_maps[wp_number][1])
-                * self.global_reflect_map_resolution[0]
-            ) / 2
-            x = (
-                self.global_reflect_map_origin[wp_number][0]
-                + x_offset
-            )
-            y = (
-                self.global_reflect_map_origin[wp_number][1]
-                + y_offset
-            )
+            x_offset = (len(self.global_height_maps[wp_number][0]) * self.global_reflect_map_resolution[0]) / 2
+            y_offset = (len(self.global_height_maps[wp_number][1]) * self.global_reflect_map_resolution[0]) / 2
+            x = (self.global_reflect_map_origin[wp_number][0] + x_offset)
+            y = (self.global_reflect_map_origin[wp_number][1] + y_offset)
             z = self.global_reflect_map_origin[wp_number][2]
+            # waypointごとの追加オフセット
+            if wp_number in self.waypoint_offset:
+                x += self.waypoint_offset[wp_number][0]
+                y += self.waypoint_offset[wp_number][1]
             wp_x.append(x)
             wp_y.append(y)
             wp_z.append(z)
@@ -266,11 +273,60 @@ class WaypointManagerMaprun(Node):
         self.action_sent = False  # アクションが送信されたかを追跡
         self.stop = False # stopするかの変数(True=stop, False=go)
         self.is_initialized = False
+
+        self.stop_xy = np.array([ 
+            #xmin,   xmax,  ymin,  ymax,flag, line
+            [-12.0,  0.0,  -12.0,  12.0, 1.0, 1.0], # test1
+            [-12.1,  12.1,  0.0,  10.0, 1.0, 0.0], # test2
+            [  999,   999,   999,   999, 0.0, 0.0] ]) #
+        self.stop_num = 0;
+        self.last_stop_waypoint = -1
+        self.waypoints_local_set = 0
     
     def reset_tf_buffer(self): 
         # キャッシュのクリアとして、Bufferのインスタンスを再作成 
         self.br = tf2_ros.TransformBroadcaster(self) 
         self.get_logger().info('TransformBroadcaster has been reset')
+    
+    def goal_pose_callback(self, msg):
+        x = msg.pose.position.x
+        y = msg.pose.position.y
+        z = msg.pose.position.z
+        qz = msg.pose.orientation.z
+        qw = msg.pose.orientation.w
+
+        xyz = np.vstack((x, y, z))
+        waypoint_range = np.vstack((self.waypoint_range, 0.0, 0.0))
+        yaw = self.orientation_to_yaw(qz, qw) * 180 / math.pi
+        xyz_range, _ = rotation_xyz(waypoint_range, 0, 0, yaw)
+        next_x = xyz[0] + xyz_range[0]
+        next_y = xyz[1] + xyz_range[1]
+        next_z = xyz[2] + xyz_range[2]
+        next_xyz = np.vstack((next_x,next_y,next_z))
+        
+        if self.waypoints_local_set == 0:
+            self.current_waypoint = 0;
+            self.waypoints = xyz;
+            self.waypoints_local_set = 1;
+        else:
+            self.waypoints = np.insert(self.waypoints, len(self.waypoints[0,:]), xyz.T, axis=1)
+
+        #full_waypoints = np.concatenate([self.xy_points], axis=0)
+        #self.waypoints_array = full_waypoints.T
+        self.current_waypoint = self.waypoint_start_index
+        self.get_logger().info(f"Start index set: {self.current_waypoint}")
+
+        # waypointが確定したのでmarkerを表示
+        self.waypoints_ready = True
+        self.publish_waypoint_markers()
+        
+        self.get_logger().info(f"Received goal: x={x:.3f}, y={y:.3f}, yaw={yaw:.3f} deg")    
+        self.get_logger().info(f"self.waypoints_array:{self.waypoints}")    
+        self.get_logger().info(f"xyz_range:{xyz_range}")    
+    
+    def orientation_to_yaw(self, z, w):
+        yaw = np.arctan2(2.0 * (w * z), 1.0 - 2.0 * (z ** 2))
+        return yaw
 
     def get_local_height_map(self, msg):
         t_stamp = msg.header.stamp
@@ -353,7 +409,7 @@ class WaypointManagerMaprun(Node):
         #best_angle, dx, dy, best_score = self.estimate_affine_ecc(local_ground_raw, global_ground_crop) # ground main
         #best_angle, dx, dy, best_score = self.estimate_affine_ecc(reflect_map_local_raw, global_crop) # rgb main
         #best_angle = 0 # test
-        self.angle_offset = best_angle
+        #self.angle_offset = best_angle
         #print(f"best_angle = {best_angle}")
         #print(f"best_score = {best_score}")
     
@@ -390,6 +446,18 @@ class WaypointManagerMaprun(Node):
             #ref_slam_x += dx / map_ground_pixel # ECC
             #ref_slam_y -= dy / map_ground_pixel # ECC
             ref_slam_xyz = np.array([ref_slam_x, ref_slam_y, 0.0])
+            if self.current_waypoint == 2 or self.current_waypoint == 14:
+                local_x = best_candidate["local_x"]
+                local_y = best_candidate["local_y"]
+                self.get_logger().info(f"stop match: local_x={local_x:.3f}, local_y={local_y:.3f}")
+                if self.last_stop_waypoint != self.current_waypoint:
+                    if ((self.stop_xy[self.stop_num,0] < local_x) and (local_x < self.stop_xy[self.stop_num,1]) and (self.stop_xy[self.stop_num,2] < local_y) and (local_y < self.stop_xy[self.stop_num,3])):
+                        self.stop = True
+                        self.get_logger().info("Stop flag reset to True")
+                        self.send_action_request()
+                        self.current_waypoint += 1
+                        self.last_stop_waypoint = self.current_waypoint
+                        self.stop_num = self.stop_num + 1;
             match_percentage = best_candidate["score"] # score / total_score
         else:
             ref_slam_xyz = [None, None, None]
@@ -403,14 +471,42 @@ class WaypointManagerMaprun(Node):
             ref_slam_x = ekf_match_position_x
             ref_slam_y = ekf_match_position_y
             ref_slam_xyz = np.array([ref_slam_x, ref_slam_y, 0.0])
+            map_obs_set = 1
         else:
             ref_slam_x = ref_slam_xyz[0]
             ref_slam_y = ref_slam_xyz[1]
+            map_obs_set = 0
         self.ref_slam_x_buff = ref_slam_x
         self.ref_slam_y_buff = ref_slam_y
         self.ref_slam_diff = [ref_slam_x - ekf_match_position_x, ref_slam_y - ekf_match_position_y, 0]
         odom_ref_slam_msg = odometry_msg(ref_slam_x, ref_slam_y, position_z, theta_x, theta_y, theta_z + self.angle_offset, t_stamp, 'odom')
         #self.odom_ref_slam_publisher.publish(odom_ref_slam_msg)
+        
+        if match_percentage > self.match_per_threshold: # high priority matching 0.35? 0.4?
+            delta_x = position_x - self.last_ekf_match_x
+            delta_y = position_y - self.last_ekf_match_y
+            estimate_x = self.last_match_x + delta_x
+            estimate_y = self.last_match_y + delta_y
+            match_odom_error = np.sqrt((ref_slam_x - estimate_x)**2 + (ref_slam_y - estimate_y)**2)
+            self.get_logger().info(f"match/odom error = {match_odom_error:.3f} m")
+            if match_odom_error < self.odom_error_threshold: # high priority matching 0.35? 0.4?
+                self.GpsXY = np.array([ref_slam_x, ref_slam_y ])
+                self.get_logger().info(f"!!!!!high priority matching: {match_percentage}!!!!!")
+                self.last_match_x = ref_slam_x
+                self.last_match_y = ref_slam_y
+                self.last_ekf_match_x = position_x
+                self.last_ekf_match_y= position_y
+                self.odom_ref_slam_publisher.publish(odom_ref_slam_msg)
+            else:
+                self.GpsXY = np.array([estimate_x, estimate_y])
+                self.get_logger().info(f"MISMATCH: score={match_percentage:.3f}, "f"error={match_odom_error:.3f} m")
+        else:
+            delta_x = position_x - self.last_ekf_match_x
+            delta_y = position_y - self.last_ekf_match_y
+            estimate_x = self.last_match_x + delta_x
+            estimate_y = self.last_match_y + delta_y
+            self.GpsXY = np.array([estimate_x, estimate_y])
+        '''
         if match_percentage > self.match_per_threshold: # high priority matching 0.35? 0.4?
             self.GpsXY = np.array([ref_slam_x, ref_slam_y ])
             self.get_logger().info(f"!!!!!high priority matching: {match_percentage}!!!!!")
@@ -426,11 +522,35 @@ class WaypointManagerMaprun(Node):
             estimate_y = self.last_match_y + delta_y
             self.GpsXY = np.array([estimate_x, estimate_y])
             #self.GpsXY = np.array([position_x, position_y ])
+        '''
         #self.robot_yaw = (theta_z + self.angle_offset) / 180 * math.pi
         self.robot_yaw = (ekf_theta_z + self.angle_offset) / 180 * math.pi
+        #self.robot_yaw = (ekf_theta_z) / 180 * math.pi
         #print(f"GpsXY = {self.GpsXY}")
         waypoint_path = path_msg(self.waypoints, t_stamp, 'odom')
         self.waypoint_path_publisher.publish(waypoint_path) 
+
+        ########## map obs set ############
+        resolution = self.global_reflect_map_resolution[self.current_waypoint]
+        map_obs = self.reflect_map_obs_matrices[self.current_waypoint]
+        #rotate image
+        map_obs = cv2.normalize(map_obs, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        #map_obs = self.rotate_image(map_obs, -self.angle_offset)
+        map_obs_index = np.where(map_obs>0)
+        if len(map_obs_index[0]) >0:
+            if map_obs_set == 1:
+                ### ekf pos ###
+                map_obs_x =  map_obs_index[1] * resolution - MAP_RANGE_GL + position_map[0] - self.ref_slam_diff[0]
+                map_obs_y = -map_obs_index[0] * resolution + MAP_RANGE_GL + position_map[1] - self.ref_slam_diff[1]
+            else:
+                ### global map pos ###
+                map_obs_x =  map_obs_index[1] * resolution - MAP_RANGE_GL + position_map[0] #- self.ref_slam_diff[0]
+                map_obs_y = -map_obs_index[0] * resolution + MAP_RANGE_GL + position_map[1] #- self.ref_slam_diff[1]
+            map_obs_z = np.zeros([1,len(map_obs_x)]) 
+            map_obs_intensity = np.zeros([1,len(map_obs_x)]) 
+            map_obs_matrix = np.vstack((map_obs_x, map_obs_y, map_obs_z, map_obs_intensity))
+            map_obs_msg = point_cloud_intensity_msg(map_obs_matrix.T, t_stamp, 'odom')
+            self.map_obs_publisher.publish(map_obs_msg) 
 
     def extract_layer_maps(self, reflect_map_obs):
         # OpenCVはBGR順
@@ -528,12 +648,16 @@ class WaypointManagerMaprun(Node):
         #self.get_logger().info('####### waypoint_theta : %f #######' % (waypoint_theta))
         
         #set judge dist
-        if abs(waypoint_theta) > 90:
-            determine_dist = self.determine_dist
+        if 39 <= self.current_waypoint <= 42:
+            waypoint_range = 4.5
         else:
-            determine_dist = self.determine_dist
+            waypoint_range = self.waypoint_range
+        #if abs(waypoint_theta) > 90:
+        #    waypoint_range = self.waypoint_range
+        #else:
+        #    waypoint_range = self.waypoint_range
         #check if the waypoint reached
-        if waypoint_dist < determine_dist:
+        if waypoint_dist < waypoint_range:
             #self.current_waypoint += 1
             if self.current_waypoint < len(self.waypoints[0,:])-1:
                 self.current_waypoint += 1
@@ -554,6 +678,7 @@ class WaypointManagerMaprun(Node):
         #publish
         pose_array = self.current_waypoint_msg(set_waypoint, 'odom')
         self.current_waypoint_publisher.publish(pose_array)
+        self.waypoint_number_pub.publish(std_msgs.Int32(data=self.current_waypoint))
 
         try:
             self.publish_waypoint_markers()
@@ -693,7 +818,7 @@ class WaypointManagerMaprun(Node):
             if sad < min_sad: 
                 min_sad = sad 
                 best_angle = angle 
-        self.angle_offset = best_angle
+        #self.angle_offset = best_angle
         #print(f"self.angle_offset: {self.angle_offset}")
         return best_angle, min_sad   
     
@@ -790,8 +915,7 @@ class WaypointManagerMaprun(Node):
             if self.GpsXY is not None :
                 print("test 1")
                 kalf_speed = self.Speed * self.kalf_speed_param
-                fused_value = self.KalfGPSXY(
-                    kalf_speed, self.SmpTime, self.robot_yaw, self.GpsXY, self.R1, self.R2)    
+                fused_value = self.KalfGPSXY(kalf_speed, self.SmpTime, self.robot_yaw, self.GpsXY, self.R1, self.R2)    
                 
                 robot_orientation = self.yaw_to_orientation(self.robot_yaw)
                 self.robot_orientationz = robot_orientation[0]
@@ -891,6 +1015,14 @@ class WaypointManagerMaprun(Node):
         res_ground = cv2.matchTemplate(global_ground, local_ground, cv2.TM_CCOEFF_NORMED)
         res_mid = cv2.matchTemplate(global_mid, local_mid, cv2.TM_CCORR_NORMED)
         res_high = cv2.matchTemplate(global_high, local_high, cv2.TM_CCORR_NORMED)
+        #robot_pos = np.array([self.fused_msg.pose.pose.position.x, self.fused_msg.pose.pose.position.y])
+        #ground_msg = self.scoremap_to_occgrid(res_ground, 1.0 / pixel, robot_pos, global_map_range, self.get_clock().now().to_msg(), "odom")
+        #self.scoremap_ground_publisher.publish(ground_msg)
+        #mid_msg = self.scoremap_to_occgrid(res_mid, 1.0 / pixel, robot_pos, global_map_range, self.get_clock().now().to_msg(), "odom")
+        #self.scoremap_mid_publisher.publish(mid_msg)
+        #high_msg = self.scoremap_to_occgrid(res_high, 1.0 / pixel, robot_pos, global_map_range, self.get_clock().now().to_msg(), "odom")
+        #self.scoremap_high_publisher.publish(high_msg)
+        
         peak_ground = self.calc_peak_ratio(res_ground)
         peak_mid    = self.calc_peak_ratio(res_mid)
         peak_high   = self.calc_peak_ratio(res_high)
@@ -962,7 +1094,9 @@ class WaypointManagerMaprun(Node):
             max_loc_y = max_loc[1] / pixel
             pos_x = (position_map[0] - global_map_range + max_loc_x + local_map_range)
             pos_y = (position_map[1] + global_map_range - max_loc_y - local_map_range)
-            candidates.append({"score": float(max_val), "x": float(pos_x), "y": float(pos_y), "loc": max_loc})
+            local_pos_x = (-global_map_range + max_loc_x + local_map_range)
+            local_pos_y = (global_map_range - max_loc_y - local_map_range)
+            candidates.append({"score": float(max_val), "x": float(pos_x), "y": float(pos_y), "local_x": float(local_pos_x), "local_y": float(local_pos_y), "loc": max_loc})
             cv2.circle(result_copy, max_loc, 30, -1, thickness=-1)
 
         return candidates
@@ -1028,6 +1162,27 @@ class WaypointManagerMaprun(Node):
 
         except cv2.error:
             return 0.0, 0.0, 0.0, 0.0
+    
+    def scoremap_to_occgrid(self, score_map, resolution, position_map, map_range, stamp, frame_id):
+        occ = OccupancyGrid()
+        occ.header.stamp = stamp
+        occ.header.frame_id = frame_id
+        occ.info.resolution = resolution
+        occ.info.width = score_map.shape[1]
+        occ.info.height = score_map.shape[0]
+        occ.info.origin.position.x = float(position_map[0] - map_range)
+        occ.info.origin.position.y = float(position_map[1] - map_range)
+        occ.info.origin.position.z = 0.0
+        occ.info.origin.orientation.w = 1.0
+        score = score_map.copy()
+
+        # matchTemplateの値は概ね[-1,1]
+        score = (score + 1.0) / 2.0
+        score = np.clip(score, 0.0, 1.0)
+        score = (score * 100).astype(np.int8)
+        score = np.flipud(score)
+        occ.data = score.flatten().tolist()
+        return occ
 
 def crop_center(image, crop_width, crop_height): 
     # 画像の高さと幅を取得 

@@ -26,6 +26,8 @@ setup(
         'reflection_intensity_localmap_multi_sub = intensity_matching.reflection_intensity_localmap_multi_sub:main',
         'reflection_intensity_globalmap_multi_sub = intensity_matching.reflection_intensity_globalmap_multi_sub:main',
         'scoremap = intensity_matching.scoremap:main',
+        'rmse = intensity_matching.rmse:main',
+        'amcl_to_odom = intensity_matching.amcl_to_odom:main',
         ],
     },
 )

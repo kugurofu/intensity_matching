@@ -53,7 +53,7 @@ class ObsBayesMap(Node):
             depth = 1
         )
         # Subscriber
-        self.local_odom_sub = self.create_subscription(nav_msgs.Odometry,'/fusion/odom',self.get_local_odom, qos_profile_sub)
+        self.local_odom_sub = self.create_subscription(nav_msgs.Odometry,'/odom/combine',self.get_local_odom, qos_profile_sub)
         self.global_odom_sub = self.create_subscription(nav_msgs.Odometry,'/fusion/odom', self.get_global_odom, qos_profile_sub)
         self.pcd_ground_sub = message_filters.Subscriber(self, sensor_msgs.PointCloud2, '/pcd_segment_ground')
         self.pcd_middle_sub = message_filters.Subscriber(self, sensor_msgs.PointCloud2, '/pcd_segment_middle')
@@ -1095,9 +1095,9 @@ def grid_map_set(map_x, map_y, data, position, map_pixel, map_range):
     #print(f"map_data_xy ={len(map_data_xy)}")
     #print(f"data[map_ind] ={len(data[map_ind])}")
     
-    data_max = np.max(data[map_ind]) # ?
+    #data_max = np.max(data[map_ind]) # ?
     #print(f"data_max ={data_max}")
-    map_data_xy_max = np.max(map_data_xy)
+    #map_data_xy_max = np.max(map_data_xy)
     #print(f"map_data_xy_max ={map_data_xy_max}")
     
     map_data[0,map_data_xy] = data[map_ind]

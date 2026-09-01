@@ -60,7 +60,7 @@ class ObsBayesMap(Node):
         save_dir = self.get_parameter('save_dir').get_parameter_value().string_value
 
         # Subscriber
-        self.local_odom_sub = self.create_subscription(nav_msgs.Odometry,'/fusion/odom',self.get_local_odom, qos_profile_sub)
+        self.local_odom_sub = self.create_subscription(nav_msgs.Odometry,'/odom/combine',self.get_local_odom, qos_profile_sub)
         self.global_odom_sub = self.create_subscription(nav_msgs.Odometry,'/fusion/odom', self.get_global_odom, qos_profile_sub)
         self.pcd_ground_sub = message_filters.Subscriber(self, sensor_msgs.PointCloud2, '/pcd_segment_ground')
         self.pcd_middle_sub = message_filters.Subscriber(self, sensor_msgs.PointCloud2, '/pcd_segment_middle')
@@ -719,8 +719,8 @@ class ObsBayesMap(Node):
         #map_data_gl_set = grid_map_set(self.pcd_ground_buff[1,:], self.pcd_ground_buff[0,:], ground_reflect_conv, position, self.ground_pixel, self.MAP_RANGE_GL)
         t2=time.perf_counter()
         map_data_ground_gl_set = grid_map_set(ekf_ground_set[1,:], ekf_ground_set[0,:], ground_reflect_conv, ekf_position, self.ground_pixel, self.MAP_RANGE_GL)
-        map_data_middle_gl_set = grid_map_set(ekf_middle_set[1,:], ekf_middle_set[0,:], middle_reflect_conv, position, self.ground_pixel, self.MAP_RANGE_GL)
-        map_data_high_gl_set = grid_map_set(ekf_high_set[1,:], ekf_high_set[0,:], high_reflect_conv, position, self.ground_pixel, self.MAP_RANGE_GL)
+        map_data_middle_gl_set = grid_map_set(ekf_middle_set[1,:], ekf_middle_set[0,:], middle_reflect_conv, ekf_position, self.ground_pixel, self.MAP_RANGE_GL)
+        map_data_high_gl_set = grid_map_set(ekf_high_set[1,:], ekf_high_set[0,:], high_reflect_conv, ekf_position, self.ground_pixel, self.MAP_RANGE_GL)
         #print("global_grid", time.perf_counter()-t2)
         #print("total", time.perf_counter()-t0)
 
@@ -1113,9 +1113,9 @@ def grid_map_set(map_x, map_y, data, position, map_pixel, map_range):
     #print(f"map_data_xy ={len(map_data_xy)}")
     #print(f"data[map_ind] ={len(data[map_ind])}")
     
-    data_max = np.max(data[map_ind])
+    #data_max = np.max(data[map_ind])
     #print(f"data_max ={data_max}")
-    map_data_xy_max = np.max(map_data_xy)
+    #map_data_xy_max = np.max(map_data_xy)
     #print(f"map_data_xy_max ={map_data_xy_max}")
     
     map_data[0,map_data_xy] = data[map_ind]

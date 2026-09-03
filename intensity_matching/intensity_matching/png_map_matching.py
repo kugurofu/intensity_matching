@@ -107,9 +107,13 @@ class WaypointManagerMaprun(Node):
         self.current_waypoint = self.waypoint_start_index # init 0
         self.stop_flag = 0
         self.waypoint_range = 4.5 # waypoint range
+        self.waypoint_range_list = np.array([
+            [36, 1.5],
+            [37, 1.5],
+        ])
         self.waypoint_offset = {
-            2: [2.0, 0.0],   # waypoint_number 2だけX方向に+2 m
-            14: [0.0, -2.0],  # waypoint_number 14だけy方向に-2 m
+            36: [3.0, 0.0],   # waypoint_number 2だけX方向に+2 m
+            99: [0.0, -2.0],  # waypoint_number 14だけy方向に-2 m
         }
         
         #positon init odom
@@ -275,12 +279,11 @@ class WaypointManagerMaprun(Node):
         self.is_initialized = False
 
         self.stop_xy = np.array([ 
-            #xmin,   xmax,  ymin,  ymax,flag, line
-            [-12.0,  0.0,  -12.0,  12.0, 1.0, 1.0], # test1
-            [-12.1,  12.1,  0.0,  10.0, 1.0, 0.0], # test2
-            [  999,   999,   999,   999, 0.0, 0.0] ]) #
+            #xmin,   xmax,  ymin,  ymax,waypoint
+            [ -0.6,   1.0,  -7.0,   7.0,  36], # test1
+            [-12.1,  12.1,  0.0,   10.0,  99], # test2
+            [  999,   999,   999,   999, 999] ]) #
         self.stop_num = 0;
-        self.last_stop_waypoint = -1
         self.waypoints_local_set = 0
     
     def reset_tf_buffer(self): 
@@ -446,18 +449,22 @@ class WaypointManagerMaprun(Node):
             #ref_slam_x += dx / map_ground_pixel # ECC
             #ref_slam_y -= dy / map_ground_pixel # ECC
             ref_slam_xyz = np.array([ref_slam_x, ref_slam_y, 0.0])
-            if self.current_waypoint == 2 or self.current_waypoint == 14:
+
+            ################### STOP ###################
+            if self.stop_num < len(self.stop_xy):
+                stop_waypoint = int(self.stop_xy[self.stop_num, 4])
                 local_x = best_candidate["local_x"]
                 local_y = best_candidate["local_y"]
                 self.get_logger().info(f"stop match: local_x={local_x:.3f}, local_y={local_y:.3f}")
-                if self.last_stop_waypoint != self.current_waypoint:
+                if self.current_waypoint == stop_waypoint:
                     if ((self.stop_xy[self.stop_num,0] < local_x) and (local_x < self.stop_xy[self.stop_num,1]) and (self.stop_xy[self.stop_num,2] < local_y) and (local_y < self.stop_xy[self.stop_num,3])):
                         self.stop = True
-                        self.get_logger().info("Stop flag reset to True")
+                        self.get_logger().info(f"STOP! waypoint={self.current_waypoint}, " f"stop_num={self.stop_num}")
                         self.send_action_request()
+                        # 次のwaypointへ
                         self.current_waypoint += 1
-                        self.last_stop_waypoint = self.current_waypoint
-                        self.stop_num = self.stop_num + 1;
+                        # 次の停止条件へ
+                        self.stop_num += 1
             match_percentage = best_candidate["score"] # score / total_score
         else:
             ref_slam_xyz = [None, None, None]
@@ -481,7 +488,7 @@ class WaypointManagerMaprun(Node):
         self.ref_slam_diff = [ref_slam_x - ekf_match_position_x, ref_slam_y - ekf_match_position_y, 0]
         odom_ref_slam_msg = odometry_msg(ref_slam_x, ref_slam_y, position_z, theta_x, theta_y, theta_z + self.angle_offset, t_stamp, 'odom')
         #self.odom_ref_slam_publisher.publish(odom_ref_slam_msg)
-        
+        '''
         if match_percentage > self.match_per_threshold: # high priority matching 0.35? 0.4?
             delta_x = position_x - self.last_ekf_match_x
             delta_y = position_y - self.last_ekf_match_y
@@ -522,7 +529,7 @@ class WaypointManagerMaprun(Node):
             estimate_y = self.last_match_y + delta_y
             self.GpsXY = np.array([estimate_x, estimate_y])
             #self.GpsXY = np.array([position_x, position_y ])
-        '''
+        
         #self.robot_yaw = (theta_z + self.angle_offset) / 180 * math.pi
         self.robot_yaw = (ekf_theta_z + self.angle_offset) / 180 * math.pi
         #self.robot_yaw = (ekf_theta_z) / 180 * math.pi
@@ -648,10 +655,15 @@ class WaypointManagerMaprun(Node):
         #self.get_logger().info('####### waypoint_theta : %f #######' % (waypoint_theta))
         
         #set judge dist
-        if 39 <= self.current_waypoint <= 42:
-            waypoint_range = 4.5
-        else:
-            waypoint_range = self.waypoint_range
+        waypoint_range = self.waypoint_range
+        waypoint_range_list = self.waypoint_range_list[self.waypoint_range_list[:, 0] == self.current_waypoint]
+
+        if len(waypoint_range_list) > 0:
+            waypoint_range = waypoint_range_list[0, 1]
+        #if 36 <= self.current_waypoint <= 37:
+        #    waypoint_range = 1.5
+        #else:
+        #    waypoint_range = self.waypoint_range
         #if abs(waypoint_theta) > 90:
         #    waypoint_range = self.waypoint_range
         #else:
@@ -1050,8 +1062,8 @@ class WaypointManagerMaprun(Node):
         else:
             rel_mid  = occ_mid
             rel_high = occ_high
-        confidence_mid  = min(1.0, rel_mid  / 0.3)
-        confidence_high = min(1.0, rel_high / 0.3)
+        confidence_mid  = min(1.0, rel_mid)
+        confidence_high = min(1.0, rel_high)
 
         score_mid  = psr_mid  * confidence_mid
         score_high = psr_high * confidence_high

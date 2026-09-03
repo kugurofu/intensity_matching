@@ -28,6 +28,7 @@ from my_msgs.action import StopFlag  # Actionメッセージのインポート
 from sensor_msgs.msg import Image
 import tf2_ros
 from visualization_msgs.msg import Marker, MarkerArray
+from geometry_msgs.msg import PointStamped
 
 # C++と同じく、Node型を継承します。
 class WaypointManagerMaprun(Node):
@@ -75,6 +76,7 @@ class WaypointManagerMaprun(Node):
         #self.subscription = self.create_subscription(nav_msgs.Odometry,'/odom_fast', self.get_odom, qos_profile_sub)
         self.subscription = self.create_subscription(nav_msgs.Odometry,'/odom/combine', self.get_ekf_odom, qos_profile_sub)
         self.subscription = self.create_subscription(Image,'/rgb_reflect_map_local', self.get_local_height_map, qos_profile_sub)
+        self.goal_sub = self.create_subscription(geometry_msgs.PoseStamped, '/goal_pose', self.goal_pose_callback, qos_profile)
         self.bridge = CvBridge()
         #self.subscription = self.create_subscription(Image,'/local_height_map',self.get_local_height_map,qos_profile_sub)
         self.subscription  # 警告を回避するために設置されているだけです。削除しても挙動はかわりません。
@@ -95,8 +97,8 @@ class WaypointManagerMaprun(Node):
         self.odom_ref_slam_publisher = self.create_publisher(nav_msgs.Odometry, 'odom_ref_slam', qos_profile)
         self.waypoint_path_publisher = self.create_publisher(nav_msgs.Path, 'waypoint_path', qos_profile) 
         self.map_obs_publisher = self.create_publisher(sensor_msgs.PointCloud2, 'map_obs', qos_profile) 
-        self.goal_sub = self.create_subscription(geometry_msgs.PoseStamped, '/goal_pose', self.goal_pose_callback, qos_profile)
-        
+        self.stop_global_pub = self.create_publisher(PointStamped, "/stop_global_position", qos_profile)
+        self.stop_marker_pub = self.create_publisher(Marker, "/stop_global_marker", qos_profile)
         self.fused_pub = self.create_publisher(nav_msgs.Odometry, '/odom_ekf_match', qos_profile)
         self.fused_msg = nav_msgs.Odometry()
 
@@ -459,7 +461,11 @@ class WaypointManagerMaprun(Node):
                 if self.current_waypoint == stop_waypoint:
                     if ((self.stop_xy[self.stop_num,0] < local_x) and (local_x < self.stop_xy[self.stop_num,1]) and (self.stop_xy[self.stop_num,2] < local_y) and (local_y < self.stop_xy[self.stop_num,3])):
                         self.stop = True
-                        self.get_logger().info(f"STOP! waypoint={self.current_waypoint}, " f"stop_num={self.stop_num}")
+                        # 停止したGlobal座標を取得(debug)
+                        global_x = self.fused_msg.pose.pose.position.x
+                        global_y = self.fused_msg.pose.pose.position.y
+                        self.get_logger().info(f"STOP! waypoint={self.current_waypoint}, "f"stop_num={self.stop_num},"f"global_x={global_x:.3f},"f"global_y={global_y:.3f}")
+                        self.publish_stop_position(global_x, global_y)
                         self.send_action_request()
                         # 次のwaypointへ
                         self.current_waypoint += 1
@@ -1195,6 +1201,46 @@ class WaypointManagerMaprun(Node):
         score = np.flipud(score)
         occ.data = score.flatten().tolist()
         return occ
+    
+    def publish_stop_position(self, x, y):
+        # ==========================================
+        # PointStamped
+        # ==========================================
+        point_msg = PointStamped()
+
+        point_msg.header.stamp = self.get_clock().now().to_msg()
+        point_msg.header.frame_id = "map"
+
+        point_msg.point.x = x
+        point_msg.point.y = y
+        point_msg.point.z = 0.0
+
+        self.stop_global_pub.publish(point_msg)
+
+        # ==========================================
+        # Marker
+        # ==========================================
+        marker = Marker()
+        marker.header.stamp = point_msg.header.stamp
+        marker.header.frame_id = "odom"
+        marker.ns = "stop_position"
+        marker.id = self.stop_num
+        marker.type = Marker.SPHERE
+        marker.action = Marker.ADD
+        marker.pose.position.x = x
+        marker.pose.position.y = y
+        marker.pose.position.z = 0.2
+        marker.pose.orientation.w = 1.0
+        marker.scale.x = 0.5
+        marker.scale.y = 0.5
+        marker.scale.z = 0.5
+        marker.color.a = 0.9
+        marker.color.r = 0.0
+        marker.color.g = 1.0
+        marker.color.b = 0.0
+        marker.lifetime.sec = 0
+
+        self.stop_marker_pub.publish(marker)
 
 def crop_center(image, crop_width, crop_height): 
     # 画像の高さと幅を取得 

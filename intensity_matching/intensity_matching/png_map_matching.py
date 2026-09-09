@@ -410,7 +410,7 @@ class WaypointManagerMaprun(Node):
         # ==========================================================
         # angle estimation using cropped map
         # ==========================================================
-        best_angle, best_score = self.find_best_rotation_angle(local_ground_raw, global_ground_crop, angle_range=10, step=0.5)
+        best_angle, best_score = self.find_best_rotation_angle(local_ground_raw, global_ground_crop, angle_range=5, step=0.5)
         #best_angle, dx, dy, best_score = self.estimate_affine_ecc(local_ground_raw, global_ground_crop) # ground main
         #best_angle, dx, dy, best_score = self.estimate_affine_ecc(reflect_map_local_raw, global_crop) # rgb main
         #best_angle = 0 # test

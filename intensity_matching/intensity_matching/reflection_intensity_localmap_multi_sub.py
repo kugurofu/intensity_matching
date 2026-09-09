@@ -55,9 +55,10 @@ class ObsBayesMap(Node):
         # Subscriber
         self.local_odom_sub = self.create_subscription(nav_msgs.Odometry,'/odom/combine',self.get_local_odom, qos_profile_sub)
         self.global_odom_sub = self.create_subscription(nav_msgs.Odometry,'/fusion/odom', self.get_global_odom, qos_profile_sub)
-        self.pcd_ground_sub = message_filters.Subscriber(self, sensor_msgs.PointCloud2, '/pcd_segment_ground')
-        self.pcd_middle_sub = message_filters.Subscriber(self, sensor_msgs.PointCloud2, '/pcd_segment_middle')
-        self.pcd_high_sub = message_filters.Subscriber(self, sensor_msgs.PointCloud2, '/pcd_segment_high')
+        #self.pcd_ground_sub = message_filters.Subscriber(self, sensor_msgs.PointCloud2, '/pcd_segment_ground')
+        #self.pcd_middle_sub = message_filters.Subscriber(self, sensor_msgs.PointCloud2, '/pcd_segment_middle')
+        #self.pcd_high_sub = message_filters.Subscriber(self, sensor_msgs.PointCloud2, '/pcd_segment_high')
+        self.pcd_sub = self.create_subscription(sensor_msgs.PointCloud2,'/pcd_rotation_merge',self.reflect_map,qos_profile_sub)
 
         # Publisher
         self.bayes_map_pub = self.create_publisher(OccupancyGrid,'/obs_bayes_map',qos_profile_sub)
@@ -83,8 +84,8 @@ class ObsBayesMap(Node):
         self.start_flag = 0
 
         # multi subscriber
-        self.ts = message_filters.ApproximateTimeSynchronizer([self.pcd_ground_sub, self.pcd_middle_sub, self.pcd_high_sub], queue_size=1, slop=0.05)
-        self.ts.registerCallback(self.reflect_map)
+        #self.ts = message_filters.ApproximateTimeSynchronizer([self.pcd_ground_sub, self.pcd_middle_sub, self.pcd_high_sub], queue_size=1, slop=0.05)
+        #self.ts.registerCallback(self.reflect_map)
 
         #tf
         self.tf_broadcaster = TransformBroadcaster(self)
@@ -225,30 +226,49 @@ class ObsBayesMap(Node):
 
         return x, y, z, intensity
 
-    def reflect_map(self, ground_msg, middle_msg, high_msg): #(self, t_stamp, ground_points, middle_points, high_points)
+    def reflect_map(self, msg): #(self, t_stamp, ground_points, middle_points, high_points)
         #print stamp message
-        t_stamp = ground_msg.header.stamp
+        t_stamp = msg.header.stamp
         #print(f"t_stamp ={t_stamp}")
         t0 = time.perf_counter()
         try:
-            transform = self.tf_buffer.lookup_transform("odom", "livox_frame", rclpy.time.Time.from_msg(ground_msg.header.stamp), timeout=Duration(seconds=0.1))
+            transform = self.tf_buffer.lookup_transform("odom", "livox_frame", rclpy.time.Time.from_msg(msg.header.stamp), timeout=Duration(seconds=0.1))
 
         except TransformException as ex:
             self.get_logger().warn(f"TF lookup failed: {ex}")
-            return        
+            return      
 
+        global_msg = do_transform_cloud(msg, transform)
+
+        x, y, z, intensity = self.pointcloud2_to_array(msg)
+        global_x, global_y, global_z, global_intensity = self.pointcloud2_to_array(global_msg)
+        ground_mask = ((z >= -0.15) & (z <= 0.12))
+        middle_mask = ((z >= 0.50) & (z <= 1.00))
+        high_mask = ((z >= 2.00) & (z <= 4.00))
+
+        ground_points = np.vstack((x[ground_mask], y[ground_mask], z[ground_mask], intensity[ground_mask]))
+        middle_points = np.vstack((x[middle_mask], y[middle_mask], z[middle_mask], intensity[middle_mask]))
+        high_points = np.vstack((x[high_mask], y[high_mask], z[high_mask], intensity[high_mask]))
+
+        ground_global = np.vstack((global_x[ground_mask], global_y[ground_mask], global_z[ground_mask], global_intensity[ground_mask]), dtype=np.float32)
+        middle_global = np.vstack((global_x[middle_mask], global_y[middle_mask], global_z[middle_mask], global_intensity[middle_mask]), dtype=np.float32)
+        high_global = np.vstack((global_x[high_mask], global_y[high_mask], global_z[high_mask], global_intensity[high_mask]), dtype=np.float32)
         # ground_points
-        ground_x, ground_y, ground_z, ground_intensity = self.pointcloud2_to_array(ground_msg)
-        ground_points = np.vstack((ground_x, ground_y, ground_z, ground_intensity))
+        #ground_x, ground_y, ground_z, ground_intensity = self.pointcloud2_to_array(ground_msg)
+        #ground_points = np.vstack((ground_x, ground_y, ground_z, ground_intensity))
 
         # high_points
-        high_x, high_y, high_z, high_intensity = self.pointcloud2_to_array(high_msg)
-        high_points = np.vstack((high_x, high_y, high_z, high_intensity))
+        #high_x, high_y, high_z, high_intensity = self.pointcloud2_to_array(high_msg)
+        #high_points = np.vstack((high_x, high_y, high_z, high_intensity))
         
         ############################ log odds ############################
         # PointCloud
         #points = self.pointcloud2_to_array(msg)
-        middle_x, middle_y, middle_z, middle_intensity = self.pointcloud2_to_array(middle_msg) # pointcloud2点群取得 numpy array
+        ###middle_x, middle_y, middle_z, middle_intensity = self.pointcloud2_to_array(middle_msg) # pointcloud2点群取得 numpy array
+        middle_x = middle_points[0] # pointcloud2点群取得 numpy array
+        middle_y = middle_points[1]
+        middle_z = middle_points[2]
+        middle_intensity = middle_points[3]
         theta = self.theta_z * np.pi / 180.0
 
         # LiDAR座標を車両座標に変換（回転のみ）
@@ -486,27 +506,27 @@ class ObsBayesMap(Node):
         #ground_x_global = ground_rot[0,:] + position[0]
         #ground_y_global = ground_rot[1,:] + position[1]
         #ground_global = np.vstack((ground_x_global, ground_y_global, ground_rot[2,:], ground_points[3,:]) , dtype=np.float32)
-        ground_global_msg = do_transform_cloud(ground_msg, transform)
-        ground_x_global, ground_y_global, ground_z_global, ground_intensity_global = self.pointcloud2_to_array(ground_global_msg)
-        ground_global = np.vstack((ground_x_global, ground_y_global, ground_z_global, ground_intensity_global), dtype=np.float32)
+        #ground_global_msg = do_transform_cloud(ground_msg, transform)
+        #ground_x_global, ground_y_global, ground_z_global, ground_intensity_global = self.pointcloud2_to_array(ground_global_msg)
+        #ground_global = np.vstack((ground_x_global, ground_y_global, ground_z_global, ground_intensity_global), dtype=np.float32)
         
         #middle global
         middle_rot, middle_rot_matrix = rotation_xyz(middle_points[[0,1,2],:], theta_x, theta_y, theta_z)
         #middle_x_global = middle_rot[0,:] + position_x
         #middle_y_global = middle_rot[1,:] + position_y
         #middle_global = np.vstack((middle_x_global, middle_y_global, middle_rot[2,:], middle_points[3,:]) , dtype=np.float32)
-        middle_global_msg = do_transform_cloud(middle_msg, transform)
-        middle_x_global, middle_y_global, middle_z_global, middle_intensity_global = self.pointcloud2_to_array(middle_global_msg)
-        middle_global = np.vstack((middle_x_global, middle_y_global, middle_z_global, middle_intensity_global), dtype=np.float32)
+        #middle_global_msg = do_transform_cloud(middle_msg, transform)
+        #middle_x_global, middle_y_global, middle_z_global, middle_intensity_global = self.pointcloud2_to_array(middle_global_msg)
+        #middle_global = np.vstack((middle_x_global, middle_y_global, middle_z_global, middle_intensity_global), dtype=np.float32)
         
         #high global
         high_rot, high_rot_matrix = rotation_xyz(high_points[[0,1,2],:], theta_x, theta_y, theta_z)
         #high_x_grobal = high_rot[0,:] + position_x
         #high_y_grobal = high_rot[1,:] + position_y
         #high_global = np.vstack((high_x_grobal, high_y_grobal, high_rot[2,:], high_points[3,:]) , dtype=np.float32)
-        high_global_msg = do_transform_cloud(high_msg, transform)
-        high_x_global,  high_y_global, high_z_global, high_intensity_global = self.pointcloud2_to_array(high_global_msg)
-        high_global = np.vstack((high_x_global, high_y_global, high_z_global, high_intensity_global), dtype=np.float32)
+        #high_global_msg = do_transform_cloud(high_msg, transform)
+        #high_x_global,  high_y_global, high_z_global, high_intensity_global = self.pointcloud2_to_array(high_global_msg)
+        #high_global = np.vstack((high_x_global, high_y_global, high_z_global, high_intensity_global), dtype=np.float32)
 
         #map lim set
         map_lim_x_min = position_x + self.MAP_LIM_X_MIN;

@@ -62,9 +62,10 @@ class ObsBayesMap(Node):
         # Subscriber
         self.local_odom_sub = self.create_subscription(nav_msgs.Odometry,'/odom/combine',self.get_local_odom, qos_profile_sub)
         self.global_odom_sub = self.create_subscription(nav_msgs.Odometry,'/fusion/odom', self.get_global_odom, qos_profile_sub)
-        self.pcd_ground_sub = message_filters.Subscriber(self, sensor_msgs.PointCloud2, '/pcd_segment_ground')
-        self.pcd_middle_sub = message_filters.Subscriber(self, sensor_msgs.PointCloud2, '/pcd_segment_middle')
-        self.pcd_high_sub = message_filters.Subscriber(self, sensor_msgs.PointCloud2, '/pcd_segment_high')
+        #self.pcd_ground_sub = message_filters.Subscriber(self, sensor_msgs.PointCloud2, '/pcd_segment_ground')
+        #self.pcd_middle_sub = message_filters.Subscriber(self, sensor_msgs.PointCloud2, '/pcd_segment_middle')
+        #self.pcd_high_sub = message_filters.Subscriber(self, sensor_msgs.PointCloud2, '/pcd_segment_high')
+        self.pcd_sub = self.create_subscription(sensor_msgs.PointCloud2,'/pcd_rotation_merge',self.reflect_map,qos_profile_sub)
 
         # Publisher
         self.bayes_map_pub = self.create_publisher(OccupancyGrid,'/obs_bayes_map',qos_profile_sub)
@@ -90,9 +91,9 @@ class ObsBayesMap(Node):
         self.start_flag = 0
 
         # multi subscriber
-        self.ts = message_filters.ApproximateTimeSynchronizer([self.pcd_ground_sub, self.pcd_middle_sub, self.pcd_high_sub], queue_size=1, slop=0.05)
-        self.ts.registerCallback(self.reflect_map)
-        
+        #self.ts = message_filters.ApproximateTimeSynchronizer([self.pcd_ground_sub, self.pcd_middle_sub, self.pcd_high_sub], queue_size=1, slop=0.05)
+        #self.ts.registerCallback(self.reflect_map)
+
         #tf
         self.tf_broadcaster = TransformBroadcaster(self)
         self.tf_buffer = Buffer(cache_time=rclpy.duration.Duration(seconds=10.0))
@@ -236,31 +237,49 @@ class ObsBayesMap(Node):
 
         return x, y, z, intensity
 
-    def reflect_map(self, ground_msg, middle_msg, high_msg): #(self, t_stamp, ground_points, middle_points, high_points)
+    def reflect_map(self, msg): #(self, t_stamp, ground_points, middle_points, high_points)
         #print stamp message
-        t_stamp = ground_msg.header.stamp
+        t_stamp = msg.header.stamp
         #print(f"t_stamp ={t_stamp}")
         t0 = time.perf_counter()
-
         try:
-            transform = self.tf_buffer.lookup_transform("odom", "livox_frame", rclpy.time.Time.from_msg(ground_msg.header.stamp), timeout=Duration(seconds=0.05))
+            transform = self.tf_buffer.lookup_transform("odom", "livox_frame", rclpy.time.Time.from_msg(msg.header.stamp), timeout=Duration(seconds=0.1))
 
         except TransformException as ex:
             self.get_logger().warn(f"TF lookup failed: {ex}")
-            return        
+            return      
 
+        global_msg = do_transform_cloud(msg, transform)
+
+        x, y, z, intensity = self.pointcloud2_to_array(msg)
+        global_x, global_y, global_z, global_intensity = self.pointcloud2_to_array(global_msg)
+        ground_mask = ((z >= -0.15) & (z <= 0.12))
+        middle_mask = ((z >= 0.50) & (z <= 1.00))
+        high_mask = ((z >= 2.00) & (z <= 4.00))
+
+        ground_points = np.vstack((x[ground_mask], y[ground_mask], z[ground_mask], intensity[ground_mask]))
+        middle_points = np.vstack((x[middle_mask], y[middle_mask], z[middle_mask], intensity[middle_mask]))
+        high_points = np.vstack((x[high_mask], y[high_mask], z[high_mask], intensity[high_mask]))
+
+        ground_global = np.vstack((global_x[ground_mask], global_y[ground_mask], global_z[ground_mask], global_intensity[ground_mask]), dtype=np.float32)
+        middle_global = np.vstack((global_x[middle_mask], global_y[middle_mask], global_z[middle_mask], global_intensity[middle_mask]), dtype=np.float32)
+        high_global = np.vstack((global_x[high_mask], global_y[high_mask], global_z[high_mask], global_intensity[high_mask]), dtype=np.float32)
         # ground_points
-        ground_x, ground_y, ground_z, ground_intensity = self.pointcloud2_to_array(ground_msg)
-        ground_points = np.vstack((ground_x, ground_y, ground_z, ground_intensity))
+        #ground_x, ground_y, ground_z, ground_intensity = self.pointcloud2_to_array(ground_msg)
+        #ground_points = np.vstack((ground_x, ground_y, ground_z, ground_intensity))
 
         # high_points
-        high_x, high_y, high_z, high_intensity = self.pointcloud2_to_array(high_msg)
-        high_points = np.vstack((high_x, high_y, high_z, high_intensity))
+        #high_x, high_y, high_z, high_intensity = self.pointcloud2_to_array(high_msg)
+        #high_points = np.vstack((high_x, high_y, high_z, high_intensity))
         
         ############################ log odds ############################
         # PointCloud
         #points = self.pointcloud2_to_array(msg)
-        middle_x, middle_y, middle_z, middle_intensity = self.pointcloud2_to_array(middle_msg) # pointcloud2点群取得 numpy array
+        ###middle_x, middle_y, middle_z, middle_intensity = self.pointcloud2_to_array(middle_msg) # pointcloud2点群取得 numpy array
+        middle_x = middle_points[0] # pointcloud2点群取得 numpy array
+        middle_y = middle_points[1]
+        middle_z = middle_points[2]
+        middle_intensity = middle_points[3]
         theta = self.theta_z * np.pi / 180.0
 
         # LiDAR座標を車両座標に変換（回転のみ）
@@ -281,7 +300,7 @@ class ObsBayesMap(Node):
         map_pos_diff = np.sqrt((ekf_position_x - self.map_position_x_buff)**2 + (ekf_position_y - self.map_position_y_buff)**2)
         map_theta_diff = abs(ekf_theta_z - self.map_theta_z_buff)
 
-        is_keyframe = ((map_pos_diff > 1.0)) # or ((map_pos_diff > 0.2) and (map_theta_diff > 40))
+        is_keyframe = ((map_pos_diff > 0.5)) # or ((map_pos_diff > 0.2) and (map_theta_diff > 40))
 
         # local map
         middle_x_local = middle_x_rot
@@ -490,7 +509,8 @@ class ObsBayesMap(Node):
 
         middle_points = np.vstack((middle_x, middle_y, middle_z, middle_intensity))
 
-        #print("ray",time.perf_counter()-t0)
+        print("ray",time.perf_counter()-t0)
+        t2 = time.perf_counter()
 
         ############################  reflection ############################
         #ground global
@@ -498,27 +518,27 @@ class ObsBayesMap(Node):
         #ground_x_global = ground_rot[0,:] + position[0]
         #ground_y_global = ground_rot[1,:] + position[1]
         #ground_global = np.vstack((ground_x_global, ground_y_global, ground_rot[2,:], ground_points[3,:]) , dtype=np.float32)
-        ground_global_msg = do_transform_cloud(ground_msg, transform)
-        ground_x_global, ground_y_global, ground_z_global, ground_intensity_global = self.pointcloud2_to_array(ground_global_msg)
-        ground_global = np.vstack((ground_x_global, ground_y_global, ground_z_global, ground_intensity_global), dtype=np.float32)
+        #ground_global_msg = do_transform_cloud(ground_msg, transform)
+        #ground_x_global, ground_y_global, ground_z_global, ground_intensity_global = self.pointcloud2_to_array(ground_global_msg)
+        #ground_global = np.vstack((ground_x_global, ground_y_global, ground_z_global, ground_intensity_global), dtype=np.float32)
         
         #middle global
         middle_rot, middle_rot_matrix = rotation_xyz(middle_points[[0,1,2],:], theta_x, theta_y, theta_z)
         #middle_x_global = middle_rot[0,:] + position_x
         #middle_y_global = middle_rot[1,:] + position_y
         #middle_global = np.vstack((middle_x_global, middle_y_global, middle_rot[2,:], middle_points[3,:]) , dtype=np.float32)
-        middle_global_msg = do_transform_cloud(middle_msg, transform)
-        middle_x_global, middle_y_global, middle_z_global, middle_intensity_global = self.pointcloud2_to_array(middle_global_msg)
-        middle_global = np.vstack((middle_x_global, middle_y_global, middle_z_global, middle_intensity_global), dtype=np.float32)
+        #middle_global_msg = do_transform_cloud(middle_msg, transform)
+        #middle_x_global, middle_y_global, middle_z_global, middle_intensity_global = self.pointcloud2_to_array(middle_global_msg)
+        #middle_global = np.vstack((middle_x_global, middle_y_global, middle_z_global, middle_intensity_global), dtype=np.float32)
         
         #high global
         high_rot, high_rot_matrix = rotation_xyz(high_points[[0,1,2],:], theta_x, theta_y, theta_z)
         #high_x_grobal = high_rot[0,:] + position_x
         #high_y_grobal = high_rot[1,:] + position_y
         #high_global = np.vstack((high_x_grobal, high_y_grobal, high_rot[2,:], high_points[3,:]) , dtype=np.float32)
-        high_global_msg = do_transform_cloud(high_msg, transform)
-        high_x_global,  high_y_global, high_z_global, high_intensity_global = self.pointcloud2_to_array(high_global_msg)
-        high_global = np.vstack((high_x_global, high_y_global, high_z_global, high_intensity_global), dtype=np.float32)
+        #high_global_msg = do_transform_cloud(high_msg, transform)
+        #high_x_global,  high_y_global, high_z_global, high_intensity_global = self.pointcloud2_to_array(high_global_msg)
+        #high_global = np.vstack((high_x_global, high_y_global, high_z_global, high_intensity_global), dtype=np.float32)
 
         #map lim set
         map_lim_x_min = position_x + self.MAP_LIM_X_MIN;
@@ -542,13 +562,13 @@ class ObsBayesMap(Node):
             )
         else:
             pcd_ground_buff = self.pcd_ground_buff
-        '''
-        
         #pcd_ground_buff = ground_global
+        '''
+        '''
         pcd_ground_buff = np.insert(self.pcd_ground_buff, len(self.pcd_ground_buff[0,:]), ground_global.T, axis=1)
         points_ground_round = np.round(pcd_ground_buff * self.ground_pixel) / self.ground_pixel
         self.pcd_ground_buff =points_ground_round[:,~pd.DataFrame({"x":points_ground_round[0,:], "y":points_ground_round[1,:], "z":points_ground_round[2,:]}).duplicated()]
-        
+        '''
         #obs round&duplicated middle  :grid_size before:28239 after100:24592 after50:8894 after10:3879
         '''
         if self.pcd_middle_buff.shape[1] == 0:
@@ -561,10 +581,11 @@ class ObsBayesMap(Node):
             pcd_middle_buff = self.pcd_middle_buff
         '''
         #pcd_middle_buff = middle_global
+        '''
         pcd_middle_buff = np.insert(self.pcd_middle_buff, len(self.pcd_middle_buff[0,:]), middle_global.T, axis=1)
         points_middle_round = np.round(pcd_middle_buff * self.ground_pixel) / self.ground_pixel
         self.pcd_middle_buff =points_middle_round[:,~pd.DataFrame({"x":points_middle_round[0,:], "y":points_middle_round[1,:], "z":points_middle_round[2,:]}).duplicated()]
-
+        '''
         #obs round&duplicated high  :grid_size before:28239 after100:24592 after50:8894 after10:3879
         '''
         if self.pcd_high_buff.shape[1] == 0:
@@ -575,12 +596,29 @@ class ObsBayesMap(Node):
             )
         else:
             pcd_high_buff = self.pcd_high_buff
-        '''
         #pcd_high_buff = high_global
+        '''
+        '''
         pcd_high_buff = np.insert(self.pcd_high_buff, len(self.pcd_high_buff[0,:]), high_global.T, axis=1)
         points_high_round = np.round(pcd_high_buff * self.ground_pixel) / self.ground_pixel
         self.pcd_high_buff =points_high_round[:,~pd.DataFrame({"x":points_high_round[0,:], "y":points_high_round[1,:], "z":points_high_round[2,:]}).duplicated()]
-        #print("duplicated",time.perf_counter()-t0)
+        '''
+        if is_keyframe:
+            self.pcd_ground_buff = self.append_unique_points(
+                self.pcd_ground_buff,
+                ground_global
+            )
+
+            self.pcd_middle_buff = self.append_unique_points(
+                self.pcd_middle_buff,
+                middle_global
+            )
+
+            self.pcd_high_buff = self.append_unique_points(
+                self.pcd_high_buff,
+                high_global
+            )
+        print("duplicated",time.perf_counter()-t2)
         
         # remove dynamic obs
         t3=time.perf_counter()
@@ -605,26 +643,53 @@ class ObsBayesMap(Node):
         
         if removed_middle_points.shape[1] > 0:
             # removeされたmiddle点をgrid化
-            remove_x = np.round(removed_middle_points[0,:] * self.ground_pixel).astype(np.int32)
-            remove_y = np.round(removed_middle_points[1,:] * self.ground_pixel).astype(np.int32)
-            remove_cells = set(zip(remove_x, remove_y))
+            #remove_x = np.round(removed_middle_points[0,:] * self.ground_pixel).astype(np.int32)
+            #remove_y = np.round(removed_middle_points[1,:] * self.ground_pixel).astype(np.int32)
+            #remove_cells = set(zip(remove_x, remove_y))
+            remove_x = np.round(
+                removed_middle_points[0, :] * self.ground_pixel
+            ).astype(np.int64)
+            remove_y = np.round(
+                removed_middle_points[1, :] * self.ground_pixel
+            ).astype(np.int64)
+            KEY_SCALE = 100000
+            remove_key = (
+                (remove_x + KEY_SCALE) * 1000000
+                + (remove_y + KEY_SCALE)
+            )
 
             # ground点をgrid化
-            ground_x = np.round(self.pcd_ground_buff[0,:] * self.ground_pixel).astype(np.int32)
-            ground_y = np.round(self.pcd_ground_buff[1,:] * self.ground_pixel).astype(np.int32)
+            #ground_x = np.round(self.pcd_ground_buff[0,:] * self.ground_pixel).astype(np.int32)
+            #ground_y = np.round(self.pcd_ground_buff[1,:] * self.ground_pixel).astype(np.int32)
+            ground_x = np.round(
+                self.pcd_ground_buff[0, :] * self.ground_pixel
+            ).astype(np.int64)
+            ground_y = np.round(
+                self.pcd_ground_buff[1, :] * self.ground_pixel
+            ).astype(np.int64)
+            ground_key = (
+                (ground_x + KEY_SCALE) * 1000000
+                + (ground_y + KEY_SCALE)
+            )
 
             # high点をgrid化
             #high_x = np.round(self.pcd_high_buff[0,:] * self.ground_pixel).astype(np.int32)
             #high_y = np.round(self.pcd_high_buff[1,:] * self.ground_pixel).astype(np.int32)
 
             # ground削除mask
-            ground_remove_mask = np.array([(middle_global_x, middle_global_y) in remove_cells for middle_global_x, middle_global_y in zip(ground_x, ground_y)])
-            self.pcd_ground_buff = self.pcd_ground_buff[:, ~ground_remove_mask]
+            #ground_remove_mask = np.array([(middle_global_x, middle_global_y) in remove_cells for middle_global_x, middle_global_y in zip(ground_x, ground_y)])
+            #self.pcd_ground_buff = self.pcd_ground_buff[:, ~ground_remove_mask]
+            ground_remove_mask = np.isin(
+                ground_key,
+                remove_key
+            )
+            self.pcd_ground_buff = \
+                self.pcd_ground_buff[:, ~ground_remove_mask]
 
             # high削除mask
             #high_remove_mask = np.array([(middle_global_x, middle_global_y) in remove_cells for middle_global_x, middle_global_y in zip(high_x, high_y)])
             #self.pcd_high_buff = self.pcd_high_buff[:, ~high_remove_mask]
-        #print("remove points",time.perf_counter()-t3)
+        print("remove points",time.perf_counter()-t3)
         #self.pcd_middle_buff = self.remove_dynamic_points(self.pcd_middle_buff, middle_dynamic_global, radius=0.25)
         #local reflect ground map
         t1=time.perf_counter()
@@ -677,6 +742,7 @@ class ObsBayesMap(Node):
         #    map_data_high_set = grid_map_set(self.pcd_high_buff[1,:], self.pcd_high_buff[0,:], high_reflect_conv, position, self.ground_pixel, self.MAP_RANGE)
 
         ##ekf pos ground local reflect map
+        t5=time.perf_counter()
         ekf_ground_buff_x = self.pcd_ground_buff[0,:] - position[0]
         ekf_ground_buff_y = self.pcd_ground_buff[1,:] - position[1]
         ekf_ground_buff_z = self.pcd_ground_buff[2,:] - position[2]
@@ -714,6 +780,7 @@ class ObsBayesMap(Node):
         ekf_high_set = np.vstack((ekf_high_set_x, ekf_high_set_y, ekf_high_set_z))
         #map_data_set_4save = grid_map_set(ekf_ground_set[1,:], ekf_ground_set[0,:], ground_reflect_conv, ekf_position, self.ground_pixel, self.MAP_RANGE)
         #print(f"map_data_high_set ={map_data_high_set.shape}")
+        print("ekf rotation", time.perf_counter()-t5)
 	
         #GL reflect map
         #map_data_gl_set = grid_map_set(self.pcd_ground_buff[1,:], self.pcd_ground_buff[0,:], ground_reflect_conv, position, self.ground_pixel, self.MAP_RANGE_GL)
@@ -721,7 +788,7 @@ class ObsBayesMap(Node):
         map_data_ground_gl_set = grid_map_set(ekf_ground_set[1,:], ekf_ground_set[0,:], ground_reflect_conv, ekf_position, self.ground_pixel, self.MAP_RANGE_GL)
         map_data_middle_gl_set = grid_map_set(ekf_middle_set[1,:], ekf_middle_set[0,:], middle_reflect_conv, ekf_position, self.ground_pixel, self.MAP_RANGE_GL)
         map_data_high_gl_set = grid_map_set(ekf_high_set[1,:], ekf_high_set[0,:], high_reflect_conv, ekf_position, self.ground_pixel, self.MAP_RANGE_GL)
-        #print("global_grid", time.perf_counter()-t2)
+        print("global_grid", time.perf_counter()-t2)
         #print("total", time.perf_counter()-t0)
 
         #if self.pcd_high_buff.shape[1] == 0:
@@ -733,11 +800,11 @@ class ObsBayesMap(Node):
         
         #publish for rviz2 
         #global ground
-        ground_global_msg = point_cloud_intensity_msg(self.pcd_ground_buff.T, t_stamp, 'odom')
+        #ground_global_msg = point_cloud_intensity_msg(self.pcd_ground_buff.T, t_stamp, 'odom')
         #self.pcd_ground_global_publisher.publish(ground_global_msg) 
         t4=time.perf_counter()
-        tmp_msg = point_cloud_intensity_msg(ground_global.T, t_stamp, 'odom')
-        self.pcd_ground_global_publisher.publish(tmp_msg)
+        #tmp_msg = point_cloud_intensity_msg(ground_global.T, t_stamp, 'odom')
+        #self.pcd_ground_global_publisher.publish(tmp_msg)
         '''
         #local map ground
         self.map_data_ground = make_map_msg(map_data_ground_set, self.ground_pixel, position, map_orientation, t_stamp, self.MAP_RANGE, "odom")
@@ -850,7 +917,78 @@ class ObsBayesMap(Node):
         #print("middle dist max =", np.max(dist))
         #print("NaN dist =", np.sum(np.isnan(dist_ray)))
         #print("INF dist =", np.sum(np.isinf(dist_ray)))
+
         
+    def append_unique_points(self, buff, new_points):
+        if new_points.shape[1] == 0:
+            return buff
+
+        # ==========================================================
+        # 1. 新規点を0.05 mグリッドへ変換
+        # ==========================================================
+        new_grid = np.round(
+            new_points[:3, :] * self.ground_pixel
+        ).astype(np.int32)
+
+        # ==========================================================
+        # 2. x,y,zを1個のint64 keyへ変換
+        # ==========================================================
+        offset = 100000
+
+        new_key = (
+            (new_grid[0].astype(np.int64) + offset) * 10000000000
+            + (new_grid[1].astype(np.int64) + offset) * 100000
+            + (new_grid[2].astype(np.int64) + offset)
+        )
+
+        # ==========================================================
+        # 3. 新規点だけで重複除去
+        # ==========================================================
+        _, unique_idx = np.unique(
+            new_key,
+            return_index=True
+        )
+
+        new_points = new_points[:, unique_idx]
+        new_key = new_key[unique_idx]
+
+        # ==========================================================
+        # 4. バッファが空ならそのまま
+        # ==========================================================
+        if buff.shape[1] == 0:
+            return new_points
+
+        # ==========================================================
+        # 5. 既存バッファのkey
+        # ==========================================================
+        buff_grid = np.round(
+            buff[:3, :] * self.ground_pixel
+        ).astype(np.int32)
+
+        buff_key = (
+            (buff_grid[0].astype(np.int64) + offset) * 10000000000
+            + (buff_grid[1].astype(np.int64) + offset) * 100000
+            + (buff_grid[2].astype(np.int64) + offset)
+        )
+
+        # ==========================================================
+        # 6. 新規点が既存バッファに存在するか確認
+        # ==========================================================
+        exists = np.isin(new_key, buff_key)
+
+        new_points = new_points[:, ~exists]
+
+        # ==========================================================
+        # 7. 追加する点がなければ終了
+        # ==========================================================
+        if new_points.shape[1] == 0:
+            return buff
+
+        # ==========================================================
+        # 8. バッファへ追加
+        # ==========================================================
+        return np.hstack((buff, new_points))
+
     def make_ref_map(self, image, position_x, position_y, theta_z, layer):
         #map_pos_diff = math.sqrt((position_x - self.map_position_x_buff)**2 + (position_y - self.map_position_y_buff)**2)
         #map_theta_diff = abs(theta_z -  self.map_theta_z_buff)
@@ -1083,7 +1221,50 @@ occupied_thresh	この閾値よりも大きい占有確率を持つピクセル�
 free_thresh	占有確率がこの閾値未満のピクセルは、完全に占有されていないと見なされます。
 negate	白/黒について、空き/占有の意味を逆にする必要があるかどうか（閾値の解釈は影響を受けません）
 '''
+def grid_map_set(map_x, map_y, data, position, map_pixel, map_range):
 
+    size = int(2 * map_range * map_pixel)
+
+    # ==================================================
+    # 元コードと同じ座標変換
+    #
+    # map_x → 行方向
+    # map_y → 列方向
+    # ==================================================
+
+    row = np.round(
+        (map_x - position[1] + map_range) * map_pixel
+    ).astype(np.int32)
+
+    col = np.round(
+        (map_y - position[0] + map_range) * map_pixel
+    ).astype(np.int32)
+
+    # ==================================================
+    # 元コードの map_ind と同じ範囲
+    # ==================================================
+
+    valid = (
+        (row > 0) &
+        (row < size - 1) &
+        (col > 0) &
+        (col < size - 1)
+    )
+
+    # ==================================================
+    # マップ作成
+    # ==================================================
+
+    grid = np.zeros((size, size), dtype=np.uint8)
+
+    grid[row[valid], col[valid]] = data[valid]
+
+    # ==================================================
+    # 元コードと同じ上下反転
+    # ==================================================
+
+    return np.flipud(grid)
+'''
 def grid_map_set(map_x, map_y, data, position, map_pixel, map_range):
     map_min_x = (-map_range + position[1] ) * map_pixel
     map_max_x = ( map_range + position[1] ) * map_pixel
@@ -1132,6 +1313,7 @@ def grid_map_set(map_x, map_y, data, position, map_pixel, map_range):
     #print(f"map_xy_max ={map_xy[map_xy_max_ind]}")
     
     return map_xy
+'''
 ###################################################################
 
 def main():

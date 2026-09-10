@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <launch>
-  <arg name="folder_path" default="~/ros2_ws/src/map/nakaniwa_0821"/>
+  <arg name="folder_path" default="~/ros2_ws/src/map/test2"/>
   <arg name="waypoint_start_index" default="0"/>
   <arg name="use_sim_time" default="true"/>
   <!-- local map -->

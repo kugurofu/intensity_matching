@@ -233,20 +233,26 @@ class ObsBayesMap(Node):
         #print(f"t_stamp ={t_stamp}")
         t0 = time.perf_counter()
         try:
-            transform = self.tf_buffer.lookup_transform("odom", "livox_frame", rclpy.time.Time.from_msg(msg.header.stamp), timeout=Duration(seconds=0.1))
+            transform = self.tf_buffer.lookup_transform("odom", "livox_frame", rclpy.time.Time())
 
         except TransformException as ex:
             self.get_logger().warn(f"TF lookup failed: {ex}")
             return      
-
+        t_tf_lookup = time.perf_counter()
         global_msg = do_transform_cloud(msg, transform)
-
+        t_tf_do = time.perf_counter()
+        print(
+            f"lookup_transform {(t_tf_lookup-t0)*1000:.2f} ms, "
+            f"do_transform_cloud {(t_tf_do-t_tf_lookup)*1000:.2f} ms"
+        )
+        t_ray1 = time.perf_counter()
         x, y, z, intensity = self.pointcloud2_to_array(msg)
         global_x, global_y, global_z, global_intensity = self.pointcloud2_to_array(global_msg)
+        t_ray2 = time.perf_counter()
         ground_mask = ((z >= -0.15) & (z <= 0.12))
         middle_mask = ((z >= 0.50) & (z <= 1.00))
         high_mask = ((z >= 2.00) & (z <= 4.00))
-
+        t_ray3 = time.perf_counter()
         ground_points = np.vstack((x[ground_mask], y[ground_mask], z[ground_mask], intensity[ground_mask]))
         middle_points = np.vstack((x[middle_mask], y[middle_mask], z[middle_mask], intensity[middle_mask]))
         high_points = np.vstack((x[high_mask], y[high_mask], z[high_mask], intensity[high_mask]))
@@ -504,7 +510,13 @@ class ObsBayesMap(Node):
         dynamic_occ[stable_dynamic] = 100
 
         middle_points = np.vstack((middle_x, middle_y, middle_z, middle_intensity))
-
+        t_ray4 = time.perf_counter()
+        print(
+            f"TF          {(t_ray1-t0)*1000:.2f} ms, "
+            f"PCD         {(t_ray2-t_ray1)*1000:.2f} ms, "
+            f"mask        {(t_ray3-t_ray2)*1000:.2f} ms, "
+            f"ray_calc    {(t_ray4-t_ray3)*1000:.2f} ms"
+        )
         print("ray",time.perf_counter()-t0)
         t2 = time.perf_counter()
 
@@ -570,9 +582,15 @@ class ObsBayesMap(Node):
         self.pcd_high_buff =points_high_round[:,~pd.DataFrame({"x":points_high_round[0,:], "y":points_high_round[1,:], "z":points_high_round[2,:]}).duplicated()]
         '''
         if is_keyframe:
+            t_append=time.perf_counter()
             self.pcd_ground_buff = self.append_unique_points(self.pcd_ground_buff, ground_global)
+            print("append ground",time.perf_counter()-t_append)
+            t_append=time.perf_counter()
             self.pcd_middle_buff = self.append_unique_points(self.pcd_middle_buff, middle_global)
+            print("append middle",time.perf_counter()-t_append)
+            t_append=time.perf_counter()
             self.pcd_high_buff = self.append_unique_points(self.pcd_high_buff, high_global)
+            print("append high",time.perf_counter()-t_append)
             # keyframe位置を更新
             self.last_keyframe_x = position_x
             self.last_keyframe_y = position_y

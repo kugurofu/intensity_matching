@@ -243,14 +243,18 @@ class ObsBayesMap(Node):
         #print(f"t_stamp ={t_stamp}")
         t0 = time.perf_counter()
         try:
-            transform = self.tf_buffer.lookup_transform("odom", "livox_frame", rclpy.time.Time.from_msg(msg.header.stamp), timeout=Duration(seconds=0.1))
+            transform = self.tf_buffer.lookup_transform("odom", "livox_frame", rclpy.time.Time())
 
         except TransformException as ex:
             self.get_logger().warn(f"TF lookup failed: {ex}")
             return      
-
+        t_tf_lookup = time.perf_counter()
         global_msg = do_transform_cloud(msg, transform)
-
+        t_tf_do = time.perf_counter()
+        print(
+            f"lookup_transform {(t_tf_lookup-t0)*1000:.2f} ms, "
+            f"do_transform_cloud {(t_tf_do-t_tf_lookup)*1000:.2f} ms"
+        )
         x, y, z, intensity = self.pointcloud2_to_array(msg)
         global_x, global_y, global_z, global_intensity = self.pointcloud2_to_array(global_msg)
         ground_mask = ((z >= -0.15) & (z <= 0.12))

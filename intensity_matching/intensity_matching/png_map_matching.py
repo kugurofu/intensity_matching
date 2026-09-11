@@ -110,11 +110,11 @@ class WaypointManagerMaprun(Node):
         self.stop_flag = 0
         self.waypoint_range = 4.5 # waypoint range
         self.waypoint_range_list = np.array([
-            [40, 1.5],
-            [41, 1.5],
+            [36, 1.5],
+            [37, 1.5],
         ])
         self.waypoint_offset = {
-            40: [3.0, 0.0],   # waypoint_number 2だけX方向に+2 m
+            36: [3.0, 0.0],   # waypoint_number 2だけX方向に+2 m
             99: [0.0, -2.0],  # waypoint_number 14だけy方向に-2 m
         }
         
@@ -282,7 +282,7 @@ class WaypointManagerMaprun(Node):
 
         self.stop_xy = np.array([ 
             #xmin,   xmax,  ymin,  ymax,waypoint
-            [ -0.6,   1.0,  -7.0,   7.0,  40], # test1
+            [ -0.6,   1.0,  -7.0,   7.0,  36], # test1
             [-12.1,  12.1,  0.0,   10.0,  99], # test2
             [  999,   999,   999,   999, 999] ]) #
         self.stop_num = 0;

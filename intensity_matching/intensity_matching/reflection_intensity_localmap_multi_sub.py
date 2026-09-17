@@ -581,20 +581,20 @@ class ObsBayesMap(Node):
         points_high_round = np.round(pcd_high_buff * self.ground_pixel) / self.ground_pixel
         self.pcd_high_buff =points_high_round[:,~pd.DataFrame({"x":points_high_round[0,:], "y":points_high_round[1,:], "z":points_high_round[2,:]}).duplicated()]
         '''
-        if is_keyframe:
-            t_append=time.perf_counter()
-            self.pcd_ground_buff = self.append_unique_points(self.pcd_ground_buff, ground_global)
-            print("append ground",time.perf_counter()-t_append)
-            t_append=time.perf_counter()
-            self.pcd_middle_buff = self.append_unique_points(self.pcd_middle_buff, middle_global)
-            print("append middle",time.perf_counter()-t_append)
-            t_append=time.perf_counter()
-            self.pcd_high_buff = self.append_unique_points(self.pcd_high_buff, high_global)
-            print("append high",time.perf_counter()-t_append)
-            # keyframe位置を更新
-            self.last_keyframe_x = position_x
-            self.last_keyframe_y = position_y
-            self.keyframe_initialized = True
+        #if is_keyframe:
+        t_append=time.perf_counter()
+        self.pcd_ground_buff = self.append_unique_points(self.pcd_ground_buff, ground_global)
+        print("append ground",time.perf_counter()-t_append)
+        t_append=time.perf_counter()
+        self.pcd_middle_buff = self.append_unique_points(self.pcd_middle_buff, middle_global)
+        print("append middle",time.perf_counter()-t_append)
+        t_append=time.perf_counter()
+        self.pcd_high_buff = self.append_unique_points(self.pcd_high_buff, high_global)
+        print("append high",time.perf_counter()-t_append)
+        # keyframe位置を更新
+        self.last_keyframe_x = position_x
+        self.last_keyframe_y = position_y
+        self.keyframe_initialized = True
         print("duplicated",time.perf_counter()-t2)
         
         # remove dynamic obs

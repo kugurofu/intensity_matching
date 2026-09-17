@@ -577,10 +577,10 @@ class ObsBayesMap(Node):
         points_high_round = np.round(pcd_high_buff * self.ground_pixel) / self.ground_pixel
         self.pcd_high_buff =points_high_round[:,~pd.DataFrame({"x":points_high_round[0,:], "y":points_high_round[1,:], "z":points_high_round[2,:]}).duplicated()]
         '''
-        if is_keyframe:
-            self.pcd_ground_buff = self.append_unique_points(self.pcd_ground_buff, ground_global)
-            self.pcd_middle_buff = self.append_unique_points(self.pcd_middle_buff, middle_global)
-            self.pcd_high_buff = self.append_unique_points(self.pcd_high_buff, high_global)
+        #if is_keyframe:
+        self.pcd_ground_buff = self.append_unique_points(self.pcd_ground_buff, ground_global)
+        self.pcd_middle_buff = self.append_unique_points(self.pcd_middle_buff, middle_global)
+        self.pcd_high_buff = self.append_unique_points(self.pcd_high_buff, high_global)
         print("duplicated",time.perf_counter()-t2)
         
         # remove dynamic obs

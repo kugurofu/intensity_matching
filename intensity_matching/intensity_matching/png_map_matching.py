@@ -110,12 +110,49 @@ class WaypointManagerMaprun(Node):
         self.stop_flag = 0
         self.waypoint_range = 4.5 # waypoint range
         self.waypoint_range_list = np.array([
-            [36, 1.5],
-            [37, 1.5],
+            [23, 1.5],
+            [24, 1.5],
+            [25, 1.5],
+            [36, 4.5],
+            [60, 1.5],
+            [61, 1.5],
+            [68, 1.5],
+            [74, 1.5],
+            [92, 1.5],
+            [97, 1.5],
+            [128, 1.5],
+            [143, 1.5],
+            [144, 1.5],
+            [197, 1.5],
+            [198, 1.5],
+            [199, 1.5],
+            [200, 1.5],
+            [304, 1.5],
+            [305, 1.5],
+            [354, 1.5],
+            [357, 1.5],
+            [358, 1.5],
+            [378, 1.5],
+            [412, 1.5],
+            [417, 1.5],
+            [433, 1.5],
+            [434, 1.5],
+            [440, 1.5],
         ])
         self.waypoint_offset = {
-            36: [3.0, 0.0],   # waypoint_number 2だけX方向に+2 m
-            99: [0.0, -2.0],  # waypoint_number 14だけy方向に-2 m
+            36: [0.0, 0.0],   # waypoint_number 2だけX方向に+2 m
+            68: [0.0, -2.0],  # waypoint_number 14だけy方向に-2 m
+            74: [0.0, -2.0],  # waypoint_number 14だけy方向に-2 m
+            92: [0.0, -2.0],  # waypoint_number 14だけy方向に-2 m
+            97: [0.0, -2.0],  # waypoint_number 14だけy方向に-2 m
+            128: [2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
+            143: [2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
+            144: [2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
+            305: [0.0, 2.0],  # waypoint_number 14だけy方向に-2 m
+            354: [0.0, 2.0],  # waypoint_number 14だけy方向に-2 m
+            378: [-2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
+            412: [0.0, 1.5],  # waypoint_number 14だけy方向に-2 m
+            440: [0.0, 1.5],  # waypoint_number 14だけy方向に-2 m
         }
         
         #positon init odom
@@ -281,10 +318,24 @@ class WaypointManagerMaprun(Node):
         self.is_initialized = False
 
         self.stop_xy = np.array([ 
-            #xmin,   xmax,  ymin,  ymax,waypoint
-            [ -0.6,   1.0,  -7.0,   7.0,  36], # test1
-            [-12.1,  12.1,  0.0,   10.0,  99], # test2
-            [  999,   999,   999,   999, 999] ]) #
+            #xmin,   xmax,  ymin,  ymax, yaw, waypoint
+            [-12.0,  12.0,   0.0,   1.0, -88,  68], # test1
+            [-12.0,  12.0,   0.0,  0.75, -95,  74], # test2
+            [-12.0,  12.0,   0.0,   2.0, -95,  92], # test2
+            [-12.0,  12.0,   0.0,   4.0, -95,  97], # test2
+            [ -4.0,   0.0, -12.0,  12.0,  -2, 128], # test2
+            [ -1.0,   1.0, -12.0,  12.0,  -5, 143], # test2
+            [ -1.0,   1.0, -12.0,  12.0, -95, 144], # test2
+            [  4.0,   6.0,  -1.0,  12.0, 177, 198], # test2
+            [ -2.0,   0.0,  -1.0,  12.0,  -2, 305], # test2
+            [-12.0,  12.0,  -2.0,   0.0,  96, 354], # test2
+            [ -2.0,   0.0,  -6.0,  -4.0,  89, 358], # test2
+            [  1.0,   3.0, -12.0,  12.0, 179, 378], # test2
+            [-12.0,  12.0,  -3.5,  -1.5,  85, 412], # test2
+            [-12.0,  12.0,  -5.0,  -3.0,  85, 417], # test2
+            [ -2.0,   0.0,  -5.0,  -3.5,  64, 434], # test2
+            [-12.0,  12.0,  -2.0,  -1.0, 102, 440], # test2
+            [  999,   999,   999,   999,   0, 999] ]) #
         self.stop_num = 0;
         self.waypoints_local_set = 0
     
@@ -341,9 +392,9 @@ class WaypointManagerMaprun(Node):
         theta_x = self.theta_x
         theta_y = self.theta_y
         theta_z = self.theta_z
-        position_x=self.ekf_position_x; 
-        position_y=self.ekf_position_y; 
-        ekf_theta_z=self.ekf_theta_z;
+        position_x=self.position_x; 
+        position_y=self.position_y; 
+        ekf_theta_z=self.theta_z;
         ekf_match_position_x = self.fused_msg.pose.pose.position.x
         ekf_match_position_y = self.fused_msg.pose.pose.position.y   
         #ekf_match_position_x = position_x
@@ -442,31 +493,58 @@ class WaypointManagerMaprun(Node):
         #best_candidate = candidates[0] # no use
         best_candidate = self.verify_candidates_multi_layer(candidates) # triple main
 
+        current_position_x = self.fused_msg.pose.pose.position.x
+        current_position_y = self.fused_msg.pose.pose.position.y
+
         # ==========================================================
         # final result
         # ==========================================================
         if best_candidate is not None:
             ref_slam_x = best_candidate["x"]
             ref_slam_y = best_candidate["y"]
+            ekf_delta_x = current_position_x - ekf_match_position_x
+            ekf_delta_y = current_position_y - ekf_match_position_y
             #ref_slam_x += dx / map_ground_pixel # ECC
             #ref_slam_y -= dy / map_ground_pixel # ECC
+            ref_slam_x += ekf_delta_x
+            ref_slam_y += ekf_delta_y
             ref_slam_xyz = np.array([ref_slam_x, ref_slam_y, 0.0])
 
             ################### STOP ###################
             if self.stop_num < len(self.stop_xy):
-                stop_waypoint = int(self.stop_xy[self.stop_num, 4])
+                stop_waypoint = int(self.stop_xy[self.stop_num, 5])
                 local_x = best_candidate["local_x"]
                 local_y = best_candidate["local_y"]
-                self.get_logger().info(f"stop match: local_x={local_x:.3f}, local_y={local_y:.3f}")
+                #self.get_logger().info(f"stop match: local_x={local_x:.3f}, local_y={local_y:.3f}")
                 if self.current_waypoint == stop_waypoint:
                     if ((self.stop_xy[self.stop_num,0] < local_x) and (local_x < self.stop_xy[self.stop_num,1]) and (self.stop_xy[self.stop_num,2] < local_y) and (local_y < self.stop_xy[self.stop_num,3])):
                         self.stop = True
+                        target_yaw = int(self.stop_xy[self.stop_num, 4])
                         # 停止したGlobal座標を取得(debug)
                         global_x = self.fused_msg.pose.pose.position.x
                         global_y = self.fused_msg.pose.pose.position.y
                         self.get_logger().info(f"STOP! waypoint={self.current_waypoint}, "f"stop_num={self.stop_num},"f"global_x={global_x:.3f},"f"global_y={global_y:.3f}")
+                        self.get_logger().info(f"""
+                            STOP DEBUG
+                            current_waypoint = {self.current_waypoint}
+                            waypoint_x = {self.waypoints[0, self.current_waypoint]:.3f}
+                            waypoint_y = {self.waypoints[1, self.current_waypoint]:.3f}
+
+                            local_x = {local_x:.3f}
+                            local_y = {local_y:.3f}
+
+                            match_x = {best_candidate["x"]:.3f}
+                            match_y = {best_candidate["y"]:.3f}
+
+                            robot_x = {self.fused_msg.pose.pose.position.x:.3f}
+                            robot_y = {self.fused_msg.pose.pose.position.y:.3f}
+
+                            stop_xmin = {self.stop_xy[self.stop_num,0]:.3f}
+                            stop_xmax = {self.stop_xy[self.stop_num,1]:.3f}
+                            """
+                        )
                         self.publish_stop_position(global_x, global_y)
-                        self.send_action_request()
+                        self.send_action_request(target_yaw)
                         # 次のwaypointへ
                         self.current_waypoint += 1
                         # 次の停止条件へ
@@ -585,16 +663,16 @@ class WaypointManagerMaprun(Node):
         return img
 
     # サーバーにアクションを送信する関数
-    def send_action_request(self):
+    def send_action_request(self, target_yaw=0):
         goal_msg = StopFlag.Goal()
 
         # stop変数の状態でaの値を決定
         if self.stop: # True
             goal_msg.a = 1  # stop
+            goal_msg.b = target_yaw
         else: # False
             goal_msg.a = 0  # go
-            
-        goal_msg.b = 2  # 任意の値を設定
+            goal_msg.b = 0
 
         # アクションサーバーが利用可能になるまで待機
         self.action_client.wait_for_server()

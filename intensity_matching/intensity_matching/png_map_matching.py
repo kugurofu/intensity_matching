@@ -120,15 +120,15 @@ class WaypointManagerMaprun(Node):
             [74, 1.5],
             [92, 1.5],
             [97, 1.5],
-            [128, 1.5],
+            [128, 4.5],
             [143, 1.5],
             [144, 1.5],
             [197, 1.5],
             [198, 1.5],
-            [199, 1.5],
+            [199, 4.5],
             [200, 1.5],
             [304, 1.5],
-            [305, 1.5],
+            [305, 3.5],
             [354, 1.5],
             [357, 1.5],
             [358, 1.5],
@@ -145,7 +145,7 @@ class WaypointManagerMaprun(Node):
             74: [0.0, -2.0],  # waypoint_number 14だけy方向に-2 m
             92: [0.0, -2.0],  # waypoint_number 14だけy方向に-2 m
             97: [0.0, -2.0],  # waypoint_number 14だけy方向に-2 m
-            128: [2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
+            128: [0.0, 0.0],  # waypoint_number 14だけy方向に-2 m
             143: [2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
             144: [2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
             305: [0.0, 2.0],  # waypoint_number 14だけy方向に-2 m
@@ -153,6 +153,7 @@ class WaypointManagerMaprun(Node):
             378: [-2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
             412: [0.0, 1.5],  # waypoint_number 14だけy方向に-2 m
             440: [0.0, 1.5],  # waypoint_number 14だけy方向に-2 m
+            458: [0.0,-3.0],  # Goal
         }
         
         #positon init odom
@@ -323,11 +324,9 @@ class WaypointManagerMaprun(Node):
             [-12.0,  12.0,   0.0,  0.75, -95,  74], # test2
             [-12.0,  12.0,   0.0,   2.0, -95,  92], # test2
             [-12.0,  12.0,   0.0,   4.0, -95,  97], # test2
-            [ -4.0,   0.0, -12.0,  12.0,  -2, 128], # test2
             [ -1.0,   1.0, -12.0,  12.0,  -5, 143], # test2
             [ -1.0,   1.0, -12.0,  12.0, -95, 144], # test2
-            [  4.0,   6.0,  -1.0,  12.0, 177, 198], # test2
-            [ -2.0,   0.0,  -1.0,  12.0,  -2, 305], # test2
+            [  3.0,   7.0,  -2.0,  12.0, 177, 198], # test2
             [-12.0,  12.0,  -2.0,   0.0,  96, 354], # test2
             [ -2.0,   0.0,  -6.0,  -4.0,  89, 358], # test2
             [  1.0,   3.0, -12.0,  12.0, 179, 378], # test2
@@ -493,8 +492,8 @@ class WaypointManagerMaprun(Node):
         #best_candidate = candidates[0] # no use
         best_candidate = self.verify_candidates_multi_layer(candidates) # triple main
 
-        current_position_x = self.fused_msg.pose.pose.position.x
-        current_position_y = self.fused_msg.pose.pose.position.y
+        current_position_x = self.position_x
+        current_position_y = self.position_y
 
         # ==========================================================
         # final result
@@ -502,8 +501,8 @@ class WaypointManagerMaprun(Node):
         if best_candidate is not None:
             ref_slam_x = best_candidate["x"]
             ref_slam_y = best_candidate["y"]
-            ekf_delta_x = current_position_x - ekf_match_position_x
-            ekf_delta_y = current_position_y - ekf_match_position_y
+            ekf_delta_x = current_position_x - position_x
+            ekf_delta_y = current_position_y - position_y
             #ref_slam_x += dx / map_ground_pixel # ECC
             #ref_slam_y -= dy / map_ground_pixel # ECC
             ref_slam_x += ekf_delta_x

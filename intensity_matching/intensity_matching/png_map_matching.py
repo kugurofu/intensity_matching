@@ -127,6 +127,9 @@ class WaypointManagerMaprun(Node):
             [198, 1.5],
             [199, 4.5],
             [200, 1.5],
+            [278, 1.5],
+            [279, 1.5],
+            [280, 1.5],
             [304, 1.5],
             [305, 3.5],
             [354, 1.5],
@@ -146,6 +149,7 @@ class WaypointManagerMaprun(Node):
             92: [0.0, -2.0],  # waypoint_number 14だけy方向に-2 m
             97: [0.0, -2.0],  # waypoint_number 14だけy方向に-2 m
             128: [0.0, 0.0],  # waypoint_number 14だけy方向に-2 m
+            129: [0.0, 1.0],  # waypoint_number 14だけy方向に-2 m
             143: [2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
             144: [2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
             305: [0.0, 2.0],  # waypoint_number 14だけy方向に-2 m
@@ -192,6 +196,13 @@ class WaypointManagerMaprun(Node):
 
         self.last_ekf_match_x = 0.0
         self.last_ekf_match_y = 0.0
+        # マッチング位置をオドメトリで追従させるための変数
+        self.ref_slam_track_initialized = False
+        self.ref_slam_track_x = 0.0
+        self.ref_slam_track_y = 0.0
+        # 最後に位置補正へ反映したオドメトリ位置
+        self.ref_slam_odom_x = 0.0
+        self.ref_slam_odom_y = 0.0
 
         self.match_per_threshold = 0.4 # use fusion match percentage 0.6 ground / rgb 0,35
         self.match_dist = 1.5 # matching dist
@@ -332,7 +343,7 @@ class WaypointManagerMaprun(Node):
             [  1.0,   3.0, -12.0,  12.0, 179, 378], # test2
             [-12.0,  12.0,  -3.5,  -1.5,  85, 412], # test2
             [-12.0,  12.0,  -5.0,  -3.0,  85, 417], # test2
-            [ -2.0,   0.0,  -5.0,  -3.5,  64, 434], # test2
+            [ -2.0,   0.0,  -6.0,  -3.5,  64, 434], # test2
             [-12.0,  12.0,  -2.0,  -1.0, 102, 440], # test2
             [  999,   999,   999,   999,   0, 999] ]) #
         self.stop_num = 0;
@@ -395,7 +406,8 @@ class WaypointManagerMaprun(Node):
         position_y=self.position_y; 
         ekf_theta_z=self.theta_z;
         ekf_match_position_x = self.fused_msg.pose.pose.position.x
-        ekf_match_position_y = self.fused_msg.pose.pose.position.y   
+        ekf_match_position_y = self.fused_msg.pose.pose.position.y  
+        #self.get_logger().info(f"[matching start] x={self.position_x:.3f}, "f"y={self.position_y:.3f}") 
         #ekf_match_position_x = position_x
         #ekf_match_position_y = position_y
 
@@ -492,6 +504,8 @@ class WaypointManagerMaprun(Node):
         #best_candidate = candidates[0] # no use
         best_candidate = self.verify_candidates_multi_layer(candidates) # triple main
 
+        #self.get_logger().info(f"[matching end] x={self.position_x:.3f}, "f"y={self.position_y:.3f}") 
+
         current_position_x = self.position_x
         current_position_y = self.position_y
 
@@ -505,6 +519,7 @@ class WaypointManagerMaprun(Node):
             ekf_delta_y = current_position_y - position_y
             #ref_slam_x += dx / map_ground_pixel # ECC
             #ref_slam_y -= dy / map_ground_pixel # ECC
+            #self.get_logger().info(f"ekf_delta: ekf_delta_x={ekf_delta_x:.3f}, ekf_delta_y={ekf_delta_y:.3f}")
             ref_slam_x += ekf_delta_x
             ref_slam_y += ekf_delta_y
             ref_slam_xyz = np.array([ref_slam_x, ref_slam_y, 0.0])
@@ -597,6 +612,33 @@ class WaypointManagerMaprun(Node):
             estimate_y = self.last_match_y + delta_y
             self.GpsXY = np.array([estimate_x, estimate_y])
         '''
+        if match_percentage > self.match_per_threshold:
+            #self.GpsXY = np.array([ref_slam_x, ref_slam_y])
+            self.get_logger().info(f"!!!!!high priority matching: {match_percentage}!!!!!")
+            self.last_match_x = ref_slam_x
+            self.last_match_y = ref_slam_y
+            self.last_ekf_match_x = position_x
+            self.last_ekf_match_y = position_y
+            # 信頼できるマッチング位置を新しい基準にする
+            self.ref_slam_track_x = ref_slam_x
+            self.ref_slam_track_y = ref_slam_y
+            # マッチング開始時のオドメトリ位置を基準にする。
+            # シングルスレッドでは、マッチング中に
+            # get_odom() が実行されないため、この位置から
+            # 処理終了後の移動量を取得できる。
+            self.ref_slam_odom_x = position_x
+            self.ref_slam_odom_y = position_y
+            self.ref_slam_track_initialized = True
+            # マッチング直後の位置も従来どおり配信
+            #self.odom_ref_slam_publisher.publish(odom_ref_slam_msg)
+
+        else:
+            delta_x = position_x - self.last_ekf_match_x
+            delta_y = position_y - self.last_ekf_match_y
+            estimate_x = self.last_match_x + delta_x
+            estimate_y = self.last_match_y + delta_y
+            self.GpsXY = np.array([estimate_x, estimate_y])
+        '''
         if match_percentage > self.match_per_threshold: # high priority matching 0.35? 0.4?
             self.GpsXY = np.array([ref_slam_x, ref_slam_y ])
             self.get_logger().info(f"!!!!!high priority matching: {match_percentage}!!!!!")
@@ -612,7 +654,7 @@ class WaypointManagerMaprun(Node):
             estimate_y = self.last_match_y + delta_y
             self.GpsXY = np.array([estimate_x, estimate_y])
             #self.GpsXY = np.array([position_x, position_y ])
-        
+        '''
         #self.robot_yaw = (theta_z + self.angle_offset) / 180 * math.pi
         self.robot_yaw = (ekf_theta_z + self.angle_offset) / 180 * math.pi
         #self.robot_yaw = (ekf_theta_z) / 180 * math.pi
@@ -842,9 +884,12 @@ class WaypointManagerMaprun(Node):
         self.label_marker_pub.publish(label_array)
         
     def get_odom(self, msg):
-        self.position_x = msg.pose.pose.position.x
-        self.position_y = msg.pose.pose.position.y
+        x = msg.pose.pose.position.x
+        y = msg.pose.pose.position.y
+        self.position_x = x
+        self.position_y = y
         self.position_z = msg.pose.pose.position.z
+        #self.get_logger().info(f"[get_odom] x={self.position_x:.3f}, "f"y={self.position_y:.3f}")
         
         flio_q_x = msg.pose.pose.orientation.x
         flio_q_y = msg.pose.pose.orientation.y
@@ -855,6 +900,24 @@ class WaypointManagerMaprun(Node):
         self.theta_x = 0 #roll /math.pi*180
         self.theta_y = 0 #pitch /math.pi*180
         self.theta_z = yaw /math.pi*180
+        if self.ref_slam_track_initialized:
+            dx = x - self.ref_slam_odom_x
+            dy = y - self.ref_slam_odom_y
+            self.ref_slam_track_x += dx
+            self.ref_slam_track_y += dy
+
+            # 次回の差分計算の基準を更新
+            self.ref_slam_odom_x = x
+            self.ref_slam_odom_y = y
+
+            # 他の処理でも最新の推定位置を参照できるようにする
+            self.ref_slam_x_buff = self.ref_slam_track_x
+            self.ref_slam_y_buff = self.ref_slam_track_y
+
+            # 最新の推定位置を /odom_ref_slam として配信
+            odom_ref_slam_msg = odometry_msg(self.ref_slam_track_x, self.ref_slam_track_y, self.position_z, self.theta_x, self.theta_y, self.theta_z + self.angle_offset, msg.header.stamp, 'odom')
+            self.GpsXY = np.array([self.ref_slam_track_x, self.ref_slam_track_y])
+            self.odom_ref_slam_publisher.publish(odom_ref_slam_msg)
         
         ########### ekf ###########
         # current_time = self.get_clock().now().to_msg()

@@ -74,7 +74,7 @@ class WaypointManagerMaprun(Node):
         # Subscriptionを作成。
         self.subscription = self.create_subscription(nav_msgs.Odometry,'/odom/combine', self.get_odom, qos_profile_sub)
         #self.subscription = self.create_subscription(nav_msgs.Odometry,'/odom_fast', self.get_odom, qos_profile_sub)
-        self.subscription = self.create_subscription(nav_msgs.Odometry,'/odom/combine', self.get_ekf_odom, qos_profile_sub)
+        self.subscription = self.create_subscription(nav_msgs.Odometry,'/fusion/odom_gnss_match', self.get_ekf_odom, qos_profile_sub)
         self.subscription = self.create_subscription(Image,'/rgb_reflect_map_local', self.get_local_height_map, qos_profile_sub)
         self.goal_sub = self.create_subscription(geometry_msgs.PoseStamped, '/goal_pose', self.goal_pose_callback, qos_profile)
         self.bridge = CvBridge()
@@ -144,7 +144,14 @@ class WaypointManagerMaprun(Node):
             [458, 1.5],
         ])
         self.waypoint_offset = {
+            0: [-1.0, 0.0],   # waypoint_number 2だけX方向に+2 m
+            1: [-1.5, 0.0],   # waypoint_number 2だけX方向に+2 m
+            2: [-1.0, 0.0],   # waypoint_number 2だけX方向に+2 m
+            3: [-1.0, 0.0],   # waypoint_number 2だけX方向に+2 m
+            4: [-1.0, 0.0],   # waypoint_number 2だけX方向に+2 m
             36: [0.0, 0.0],   # waypoint_number 2だけX方向に+2 m
+            41: [1.0, 0.0],   # waypoint_number 2だけX方向に+2 m
+            42: [1.0, 0.0],   # waypoint_number 2だけX方向に+2 m
             68: [0.0, -2.0],  # waypoint_number 14だけy方向に-2 m
             74: [0.0, -2.0],  # waypoint_number 14だけy方向に-2 m
             92: [0.0, -2.0],  # waypoint_number 14だけy方向に-2 m
@@ -641,6 +648,7 @@ class WaypointManagerMaprun(Node):
             estimate_x = self.last_match_x + delta_x
             estimate_y = self.last_match_y + delta_y
             self.GpsXY = np.array([estimate_x, estimate_y])
+            self.ref_slam_track_initialized = False
         '''
         if match_percentage > self.match_per_threshold: # high priority matching 0.35? 0.4?
             self.GpsXY = np.array([ref_slam_x, ref_slam_y ])
@@ -753,8 +761,8 @@ class WaypointManagerMaprun(Node):
         #position_x=self.ekf_position_x; position_y=self.ekf_position_y; 
         theta_x=self.theta_x; theta_y=self.theta_y; theta_z=self.theta_z #-self.angle_offset;
         ###### ekf position ######
-        #position_x=self.ekf_position_x; position_y=self.ekf_position_y; 
-        position_x=self.fused_msg.pose.pose.position.x; position_y=self.fused_msg.pose.pose.position.y; 
+        position_x=self.ekf_position_x; position_y=self.ekf_position_y; 
+        #position_x=self.fused_msg.pose.pose.position.x; position_y=self.fused_msg.pose.pose.position.y; 
         #theta_x=self.ekf_theta_x; theta_y=self.ekf_theta_y; theta_z=self.ekf_theta_z-self.angle_offset;
         flio_q_x = self.fused_msg.pose.pose.orientation.x
         flio_q_y = self.fused_msg.pose.pose.orientation.y

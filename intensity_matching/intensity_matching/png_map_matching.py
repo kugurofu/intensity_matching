@@ -161,7 +161,7 @@ class WaypointManagerMaprun(Node):
             143: [2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
             144: [2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
             305: [0.0, 2.0],  # waypoint_number 14だけy方向に-2 m
-            354: [0.0, 2.0],  # waypoint_number 14だけy方向に-2 m
+            354: [0.0, 3.0],  # waypoint_number 14だけy方向に-2 m
             378: [-2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
             412: [0.0, 1.5],  # waypoint_number 14だけy方向に-2 m
             440: [0.0, 1.5],  # waypoint_number 14だけy方向に-2 m
@@ -341,14 +341,14 @@ class WaypointManagerMaprun(Node):
             #xmin,   xmax,  ymin,  ymax, yaw, waypoint
             [-12.0,  12.0,   0.0,   1.0, -88,  68], # test1
             [-12.0,  12.0,   0.0,  0.75, -95,  74], # test2
-            [-12.0,  12.0,   0.0,   2.0, -95,  92], # test2
-            [-12.0,  12.0,   0.0,   4.0, -95,  97], # test2
-            [ -5.5,  -3.5,   0.0,   4.0,  -5, 128], # test2
+            [-12.0,  12.0,   0.0,   1.5, -95,  92], # test2
+            [-12.0,  12.0,   0.0,   3.5, -95,  97], # test2
+            [ -3.5,  -1.5,  -1.0,   4.0,  -5, 128], # test2
             [ -1.0,   1.0, -12.0,  12.0,  -5, 143], # test2
             [ -1.0,   1.0, -12.0,  12.0, -95, 144], # test2
-            [  3.0,   7.0,  -2.0,  12.0, 177, 198], # test2
-            [ -5.0,  12.0,  -1.0,  12.0,  -2, 305], # test2
-            [-12.0,  12.0,  -2.0,   0.0,  96, 354], # test2
+            [  2.0,   4.5,  -2.0,  12.0, 177, 198], # test2
+            [ -2.5,  12.0,  -1.0,  12.0,  -2, 305], # test2
+            [-12.0,  12.0,   1.0,   3.0,  96, 354], # test2
             [ -2.0,   0.0,  -6.0,  -4.0,  89, 358], # test2
             [  1.0,   3.0, -12.0,  12.0, 179, 378], # test2
             [-12.0,  12.0,  -3.5,  -1.5,  85, 412], # test2
@@ -358,6 +358,7 @@ class WaypointManagerMaprun(Node):
             [  999,   999,   999,   999,   0, 999] ]) #
         self.stop_num = 0;
         self.waypoints_local_set = 0
+        self.get_logger().info('!!!!!!!!!!!!!!!!!!!!!!!!!! START !!!!!!!!!!!!!!!!!!!!!!!!!!')
     
     def reset_tf_buffer(self): 
         # キャッシュのクリアとして、Bufferのインスタンスを再作成 
@@ -715,7 +716,7 @@ class WaypointManagerMaprun(Node):
         return img
 
     # サーバーにアクションを送信する関数
-    def send_action_request(self, target_yaw=0):
+    def send_action_request(self, target_yaw=-90):
         goal_msg = StopFlag.Goal()
 
         # stop変数の状態でaの値を決定
@@ -951,6 +952,42 @@ class WaypointManagerMaprun(Node):
             self.Speed = 0
         self.prev_pos = current_pos
         self.is_initialized = True # 初期化フラグを立てる
+
+        if self.current_waypoint >= 362: # after singou2
+            if self.stop_num <= 10:
+                self.stop_num = 11
+        elif self.current_waypoint >= 307: # after 90do dourotan2
+            if self.stop_num <= 8:
+                self.stop_num = 9
+        elif self.current_waypoint >= 154: # after singou1
+            if self.stop_num <= 6:
+                self.stop_num = 7
+        elif self.current_waypoint >= 130: # after dourotan3
+            if self.stop_num <= 4:
+                self.stop_num = 5
+        elif self.current_waypoint >= 100: # after dourotan2 
+            if self.stop_num <= 3:
+                self.stop_num = 4
+        elif self.current_waypoint >= 93: # after dourotan1
+            if self.stop_num <= 2:
+                self.stop_num = 3
+        elif self.current_waypoint >= 79: # after siyakusyo oudanhodou2
+            if self.stop_num <= 1:
+                self.stop_num = 2
+        '''
+        elif self.current_waypoint >= 79: # after ekimae oudanhodou2
+            if self.stop_num <= 1:
+                self.stop_num = 2
+        elif self.current_waypoint >= 100: # after ekimae oudanhodou1
+            if self.stop_num <= 3:
+                self.stop_num = 4
+        elif self.current_waypoint >= 154: # after singou
+            if self.stop_num <= 6:
+                self.stop_num = 7
+        elif self.current_waypoint >= 370: # after dourotan2
+            if self.stop_num <= 10:
+                self.stop_num = 11
+        '''
         
     def get_ekf_odom(self, msg):
         self.ekf_position_x = msg.pose.pose.position.x + self.start_position_init_x

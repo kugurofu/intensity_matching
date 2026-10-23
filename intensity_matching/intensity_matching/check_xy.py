@@ -4,14 +4,13 @@ import cv2
 import numpy as np
 import os
 import sys
+import tkinter as tk
+from tkinter import filedialog
 
 
 # ==========================================================
 # 設定
 # ==========================================================
-
-# waypoint画像
-IMAGE_PATH = "~/ros2_ws/src/map/test2/waypoint_map_rgb_012.png"
 
 # YAMLと同じ解像度 [m/pixel]
 # 例：0.05 m/pixel
@@ -28,6 +27,31 @@ display_image = None
 # クリックした座標
 clicked_x = None
 clicked_y = None
+
+
+# ==========================================================
+# 画像ファイル選択
+# ==========================================================
+
+def select_image():
+
+    # Tkinterのメインウィンドウを非表示
+    root = tk.Tk()
+    root.withdraw()
+
+    # ファイル選択ダイアログ
+    image_path = filedialog.askopenfilename(
+        title="Waypoint画像を選択してください",
+        filetypes=[
+            ("PNG files", "*.png"),
+            ("JPEG files", "*.jpg *.jpeg"),
+            ("All files", "*.*")
+        ]
+    )
+
+    root.destroy()
+
+    return image_path
 
 
 # ==========================================================
@@ -48,18 +72,10 @@ def mouse_callback(event, x, y, flags, param):
     # ------------------------------------------------------
     # 画像中心を原点とした座標に変換
     #
-    # 画像:
-    #       y-
-    #       ↑
-    #
-    #  x- ← (0,0) → x+
-    #
-    #       ↓
-    #       y-
-    #
-    # ROS / waypoint座標では
-    # 上方向を +Y とするため、
-    # pixel_y は反転する
+    # 右方向 : +X
+    # 左方向 : -X
+    # 上方向 : +Y
+    # 下方向 : -Y
     # ------------------------------------------------------
 
     center_x = w / 2.0
@@ -112,7 +128,10 @@ def mouse_callback(event, x, y, flags, param):
         2
     )
 
-    cv2.imshow("Waypoint XY Selector", display_image)
+    cv2.imshow(
+        "Waypoint XY Selector",
+        display_image
+    )
 
 
 # ==========================================================
@@ -124,22 +143,42 @@ def main():
     global image
     global display_image
 
-    image_path = os.path.expanduser(IMAGE_PATH)
+    # ------------------------------------------------------
+    # 起動時に画像を選択
+    # ------------------------------------------------------
 
-    image = cv2.imread(image_path, cv2.IMREAD_COLOR)
+    image_path = select_image()
+
+    # キャンセルされた場合
+    if not image_path:
+        print("画像が選択されませんでした。")
+        return
+
+    # ------------------------------------------------------
+    # 画像読み込み
+    # ------------------------------------------------------
+
+    image = cv2.imread(
+        image_path,
+        cv2.IMREAD_COLOR
+    )
 
     if image is None:
-        print(f"画像を読み込めませんでした:")
+        print("画像を読み込めませんでした:")
         print(image_path)
         return
 
     h, w = image.shape[:2]
 
+    # ------------------------------------------------------
+    # 情報表示
+    # ------------------------------------------------------
+
     print("========================================")
     print(" Waypoint XY Selector")
     print("========================================")
-    print(f"Image : {image_path}")
-    print(f"Size  : {w} x {h} pixel")
+    print(f"Image      : {image_path}")
+    print(f"Size       : {w} x {h} pixel")
     print(f"Resolution : {RESOLUTION} m/pixel")
     print()
     print("画像をクリックすると座標を表示します。")
@@ -152,12 +191,13 @@ def main():
     print("ESC または q : 終了")
     print("========================================")
 
+    # ------------------------------------------------------
+    # 初期表示画像
+    # ------------------------------------------------------
+
     display_image = image.copy()
 
-    # ------------------------------------------------------
-    # 中心を表示
-    # ------------------------------------------------------
-
+    # 中心座標
     center_x = int(w / 2)
     center_y = int(h / 2)
 
@@ -184,7 +224,10 @@ def main():
     # ウィンドウ
     # ------------------------------------------------------
 
-    cv2.namedWindow("Waypoint XY Selector")
+    cv2.namedWindow(
+        "Waypoint XY Selector"
+    )
+
     cv2.setMouseCallback(
         "Waypoint XY Selector",
         mouse_callback
@@ -208,6 +251,10 @@ def main():
 
     cv2.destroyAllWindows()
 
+
+# ==========================================================
+# 実行
+# ==========================================================
 
 if __name__ == "__main__":
     main()

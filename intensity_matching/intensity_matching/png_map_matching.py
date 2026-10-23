@@ -28,6 +28,7 @@ from my_msgs.action import StopFlag  # Actionメッセージのインポート
 from sensor_msgs.msg import Image
 import tf2_ros
 from visualization_msgs.msg import Marker, MarkerArray
+from geometry_msgs.msg import PointStamped
 
 # C++と同じく、Node型を継承します。
 class WaypointManagerMaprun(Node):
@@ -73,8 +74,10 @@ class WaypointManagerMaprun(Node):
         # Subscriptionを作成。
         self.subscription = self.create_subscription(nav_msgs.Odometry,'/odom/combine', self.get_odom, qos_profile_sub)
         #self.subscription = self.create_subscription(nav_msgs.Odometry,'/odom_fast', self.get_odom, qos_profile_sub)
-        self.subscription = self.create_subscription(nav_msgs.Odometry,'/odom/combine', self.get_ekf_odom, qos_profile_sub)
+        self.subscription = self.create_subscription(nav_msgs.Odometry,'/fusion/odom_gnss_match', self.get_ekf_odom, qos_profile_sub)
         self.subscription = self.create_subscription(Image,'/rgb_reflect_map_local', self.get_local_height_map, qos_profile_sub)
+        self.goal_sub = self.create_subscription(geometry_msgs.PoseStamped, '/goal_pose', self.goal_pose_callback, qos_profile)
+        self.skip_matching_stop_sub = self.create_subscription(std_msgs.Int32,'/skip_matching_stop',self.skip_matching_stop_callback, qos_profile_sub)
         self.bridge = CvBridge()
         #self.subscription = self.create_subscription(Image,'/local_height_map',self.get_local_height_map,qos_profile_sub)
         self.subscription  # 警告を回避するために設置されているだけです。削除しても挙動はかわりません。
@@ -95,8 +98,9 @@ class WaypointManagerMaprun(Node):
         self.odom_ref_slam_publisher = self.create_publisher(nav_msgs.Odometry, 'odom_ref_slam', qos_profile)
         self.waypoint_path_publisher = self.create_publisher(nav_msgs.Path, 'waypoint_path', qos_profile) 
         self.map_obs_publisher = self.create_publisher(sensor_msgs.PointCloud2, 'map_obs', qos_profile) 
-        self.goal_sub = self.create_subscription(geometry_msgs.PoseStamped, '/goal_pose', self.goal_pose_callback, qos_profile)
-        
+        self.stop_global_pub = self.create_publisher(PointStamped, "/stop_global_position", qos_profile)
+        self.stop_marker_pub = self.create_publisher(Marker, "/stop_global_marker", qos_profile)
+        self.skip_path_stop_pub = self.create_publisher(std_msgs.Int32, '/skip_path_stop', qos_profile)
         self.fused_pub = self.create_publisher(nav_msgs.Odometry, '/odom_ekf_match', qos_profile)
         self.fused_msg = nav_msgs.Odometry()
 
@@ -107,9 +111,85 @@ class WaypointManagerMaprun(Node):
         self.current_waypoint = self.waypoint_start_index # init 0
         self.stop_flag = 0
         self.waypoint_range = 4.5 # waypoint range
+        self.waypoint_range_list = np.array([
+            [23, 1.5],
+            [24, 1.5],
+            [25, 1.5],
+            [36, 4.5],
+            [60, 1.5],
+            [61, 1.5],
+            [68, 1.5],
+            [74, 1.5],
+            [92, 1.5],
+            [97, 1.5],
+            [128, 1.5],
+            [143, 1.5],
+            [144, 1.5],
+            [197, 1.5],
+            [198, 1.5],
+            [199, 1.5],
+            [200, 1.5],
+            [278, 1.5],
+            [279, 1.5],
+            [280, 1.5],
+            [304, 1.5],
+            [305, 1.5],
+            [354, 1.5],
+            [357, 1.5],
+            [358, 1.5],
+            [378, 1.5],
+            [412, 1.5],
+            [417, 1.5],
+            [433, 1.5],
+            [434, 1.5],
+            [440, 1.5],
+            [458, 1.5],
+        ])
         self.waypoint_offset = {
-            2: [2.0, 0.0],   # waypoint_number 2だけX方向に+2 m
-            14: [0.0, -2.0],  # waypoint_number 14だけy方向に-2 m
+            0: [-1.0, 0.0],   # waypoint_number 2だけX方向に+2 m
+            1: [-1.5, 0.0],   # waypoint_number 2だけX方向に+2 m
+            2: [-1.0, 0.0],   # waypoint_number 2だけX方向に+2 m
+            3: [-1.0, 0.0],   # waypoint_number 2だけX方向に+2 m
+            4: [-1.0, 0.0],   # waypoint_number 2だけX方向に+2 m
+            36: [0.0, 0.0],   # waypoint_number 2だけX方向に+2 m
+            41: [1.0, 0.0],   # waypoint_number 2だけX方向に+2 m
+            42: [1.0, 0.0],   # waypoint_number 2だけX方向に+2 m
+            68: [0.0, -2.0],  # waypoint_number 14だけy方向に-2 m
+            74: [0.0, -2.0],  # waypoint_number 14だけy方向に-2 m
+            92: [0.0, -2.0],  # waypoint_number 14だけy方向に-2 m
+            97: [0.0, -2.0],  # waypoint_number 14だけy方向に-2 m
+            128: [0.0, 0.0],  # waypoint_number 14だけy方向に-2 m
+            129: [0.0, 1.0],  # waypoint_number 14だけy方向に-2 m
+            143: [2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
+            144: [2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
+            155: [0.5, 0.0],  # waypoint_number 14だけy方向に-2 m
+            156: [1.5, 0.0],  # waypoint_number 14だけy方向に-2 m
+            158: [1.0, 0.0],  # waypoint_number 14だけy方向に-2 m
+            161: [2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
+            162: [1.5, 0.0],  # waypoint_number 14だけy方向に-2 m
+            163: [0.5, 0.0],  # waypoint_number 14だけy方向に-2 m
+            164: [0.5, 0.0],  # waypoint_number 14だけy方向に-2 m
+            165: [-0.5, 0.0],  # waypoint_number 14だけy方向に-2 m
+            167: [-0.5, 0.0],  # waypoint_number 14だけy方向に-2 m
+            169: [1.0, 0.0],  # waypoint_number 14だけy方向に-2 m
+            170: [2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
+            305: [0.0, 2.0],  # waypoint_number 14だけy方向に-2 m
+            337: [1.5, 0.0],  # waypoint_number 14だけy方向に-2 m
+            339: [2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
+            340: [3.0, 0.0],  # waypoint_number 14だけy方向に-2 m
+            341: [1.0, 0.0],  # waypoint_number 14だけy方向に-2 m
+            344: [0.5, 0.0],  # waypoint_number 14だけy方向に-2 m
+            348: [-0.5, 0.0],  # waypoint_number 14だけy方向に-2 m
+            348: [0.5, 0.0],  # waypoint_number 14だけy方向に-2 m
+            349: [1.0, 0.0],  # waypoint_number 14だけy方向に-2 m
+            351: [-1.0, 0.0],  # waypoint_number 14だけy方向に-2 m
+            353: [0.5, 0.0],  # waypoint_number 14だけy方向に-2 m
+            354: [0.0, 3.0],  # waypoint_number 14だけy方向に-2 m
+            378: [-2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
+            412: [0.0, 1.5],  # waypoint_number 14だけy方向に-2 m
+            439: [1.0, 0.0],  # waypoint_number 14だけy方向に-2 m
+            440: [0.0, 1.5],  # waypoint_number 14だけy方向に-2 m
+            458: [0.0,-7.0],  # Goal
         }
         
         #positon init odom
@@ -148,6 +228,13 @@ class WaypointManagerMaprun(Node):
 
         self.last_ekf_match_x = 0.0
         self.last_ekf_match_y = 0.0
+        # マッチング位置をオドメトリで追従させるための変数
+        self.ref_slam_track_initialized = False
+        self.ref_slam_track_x = 0.0
+        self.ref_slam_track_y = 0.0
+        # 最後に位置補正へ反映したオドメトリ位置
+        self.ref_slam_odom_x = 0.0
+        self.ref_slam_odom_y = 0.0
 
         self.match_per_threshold = 0.4 # use fusion match percentage 0.6 ground / rgb 0,35
         self.match_dist = 1.5 # matching dist
@@ -275,18 +362,59 @@ class WaypointManagerMaprun(Node):
         self.is_initialized = False
 
         self.stop_xy = np.array([ 
-            #xmin,   xmax,  ymin,  ymax,flag, line
-            [-12.0,  0.0,  -12.0,  12.0, 1.0, 1.0], # test1
-            [-12.1,  12.1,  0.0,  10.0, 1.0, 0.0], # test2
-            [  999,   999,   999,   999, 0.0, 0.0] ]) #
+            #xmin,   xmax,  ymin,  ymax, yaw, waypoint
+            [-12.0,  12.0,   0.0,   1.0, -88,  68], # test1
+            [-12.0,  12.0,   0.0,  0.75, -95,  74], # test2
+            [-12.0,  12.0,   0.0,   1.5, -95,  92], # test2
+            [-12.0,  12.0,   0.0,   3.5, -95,  97], # test2
+            [ -3.5,  -1.5,  -1.0,   4.0,  -5, 128], # test2
+            [ -1.0,   1.0, -12.0,  12.0,  -5, 143], # test2
+            [  0.0,   2.0, -12.0,  12.0, -95, 144], # test2 [ -1.0,   1.0, -12.0,  12.0, -95, 144],
+            [  2.0,   5.0,  -2.0,  12.0, 177, 198], # test2
+            [ -5.5,  -3.5, -12.0,  12.0,  -2, 306], # test2 [ -2.5,  12.0,  -1.0,  12.0,  -2, 305], # test2
+            [-12.0,  12.0,  -2.0,   0.0,  96, 354], # test2 [-12.0,  12.0,   1.0,   3.0,  96, 354],
+            [ -2.0,   0.0,  -5.5,  -4.0,  89, 358], # test2 [ -2.0,   0.0,  -6.0,  -4.0,  89, 358],
+            [  0.0,   2.0, -12.0,  12.0, 179, 378], # test2 [  1.0,   3.0, -12.0,  12.0, 179, 378],
+            [-12.0,  12.0,  -2.5,  -0.5,  85, 412], # test2 [-12.0,  12.0,  -3.5,  -1.5,  85, 412],
+            [-12.0,  12.0,  -4.0,  -2.0,  85, 417], # test2 [-12.0,  12.0,  -5.0,  -3.0,  85, 417],
+            [ -2.0,   0.0,  -6.5,  -3.5,  64, 434], # test2 [ -2.0,   0.0,  -6.0,  -3.5,  64, 434],
+            [-12.0,  12.0, -1.25,   1.0, 102, 440], # test2 [-12.0,  12.0,  -2.0,  -1.0, 102, 440],
+            [  999,   999,   999,   999,   0, 999] ]) #
         self.stop_num = 0;
-        self.last_stop_waypoint = -1
         self.waypoints_local_set = 0
+        self.last_matching_waypoint = self.current_waypoint
+        self.relocalization_mode = False
+        self.right_half_exclude_waypoints = {155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 336, 337, 338, 339, 340, 341, 342, 343, 345, 346, 347, 348, 349, 350, 351, 352, 353, 354}
+        # 相手側にスキップ通知を送信済みの停止地点
+        self.notified_stop_wps = set()
+        # 相手側からスキップ通知を受信済みの停止地点
+        self.skipped_stop_wps = set()
+        self.get_logger().info('!!!!!!!!!!!!!!!!!!!!!!!!!! START !!!!!!!!!!!!!!!!!!!!!!!!!!')
     
     def reset_tf_buffer(self): 
         # キャッシュのクリアとして、Bufferのインスタンスを再作成 
         self.br = tf2_ros.TransformBroadcaster(self) 
         self.get_logger().info('TransformBroadcaster has been reset')
+    
+    def skip_matching_stop_callback(self, msg):
+        stop_wp = int(msg.data)
+        # 同じ通知をすでに処理している場合は無視
+        if stop_wp in self.skipped_stop_wps:
+            return
+        # 現在の停止条件が存在するか確認
+        if self.stop_num >= len(self.stop_xy) - 1:
+            return
+
+        current_stop_wp = int(self.stop_xy[self.stop_num, 5])
+
+        # 現在の停止条件と通知されたWPが一致する場合だけスキップ
+        if current_stop_wp == stop_wp:
+            self.skipped_stop_wps.add(stop_wp)
+            self.stop_num += 1
+
+            self.get_logger().info(f'Skip matching stop: wp={stop_wp}, 'f'next_stop_wp={int(self.stop_xy[self.stop_num, 5])}')
+        else:
+            self.get_logger().warning(f'Skip request ignored: requested_wp={stop_wp}, 'f'current_stop_wp={current_stop_wp}')
     
     def goal_pose_callback(self, msg):
         x = msg.pose.position.x
@@ -336,11 +464,12 @@ class WaypointManagerMaprun(Node):
         theta_x = self.theta_x
         theta_y = self.theta_y
         theta_z = self.theta_z
-        position_x=self.ekf_position_x; 
-        position_y=self.ekf_position_y; 
-        ekf_theta_z=self.ekf_theta_z;
+        position_x=self.position_x; 
+        position_y=self.position_y; 
+        ekf_theta_z=self.theta_z;
         ekf_match_position_x = self.fused_msg.pose.pose.position.x
-        ekf_match_position_y = self.fused_msg.pose.pose.position.y   
+        ekf_match_position_y = self.fused_msg.pose.pose.position.y  
+        #self.get_logger().info(f"[matching start] x={self.position_x:.3f}, "f"y={self.position_y:.3f}") 
         #ekf_match_position_x = position_x
         #ekf_match_position_y = position_y
 
@@ -405,7 +534,7 @@ class WaypointManagerMaprun(Node):
         # ==========================================================
         # angle estimation using cropped map
         # ==========================================================
-        best_angle, best_score = self.find_best_rotation_angle(local_ground_raw, global_ground_crop, angle_range=10, step=0.5)
+        best_angle, best_score = self.find_best_rotation_angle(local_ground_raw, global_ground_crop, angle_range=5, step=0.5)
         #best_angle, dx, dy, best_score = self.estimate_affine_ecc(local_ground_raw, global_ground_crop) # ground main
         #best_angle, dx, dy, best_score = self.estimate_affine_ecc(reflect_map_local_raw, global_crop) # rgb main
         #best_angle = 0 # test
@@ -437,27 +566,73 @@ class WaypointManagerMaprun(Node):
         #best_candidate = candidates[0] # no use
         best_candidate = self.verify_candidates_multi_layer(candidates) # triple main
 
+        #self.get_logger().info(f"[matching end] x={self.position_x:.3f}, "f"y={self.position_y:.3f}") 
+
+        current_position_x = self.position_x
+        current_position_y = self.position_y
+
         # ==========================================================
         # final result
         # ==========================================================
         if best_candidate is not None:
             ref_slam_x = best_candidate["x"]
             ref_slam_y = best_candidate["y"]
+            ekf_delta_x = current_position_x - position_x
+            ekf_delta_y = current_position_y - position_y
             #ref_slam_x += dx / map_ground_pixel # ECC
             #ref_slam_y -= dy / map_ground_pixel # ECC
+            #self.get_logger().info(f"ekf_delta: ekf_delta_x={ekf_delta_x:.3f}, ekf_delta_y={ekf_delta_y:.3f}")
+            ref_slam_x += ekf_delta_x
+            ref_slam_y += ekf_delta_y
             ref_slam_xyz = np.array([ref_slam_x, ref_slam_y, 0.0])
-            if self.current_waypoint == 2 or self.current_waypoint == 14:
+            self.relocalization_mode = False
+
+            ################### STOP ###################
+            if self.stop_num < len(self.stop_xy):
+                stop_waypoint = int(self.stop_xy[self.stop_num, 5])
                 local_x = best_candidate["local_x"]
                 local_y = best_candidate["local_y"]
-                self.get_logger().info(f"stop match: local_x={local_x:.3f}, local_y={local_y:.3f}")
-                if self.last_stop_waypoint != self.current_waypoint:
+                #self.get_logger().info(f"stop match: local_x={local_x:.3f}, local_y={local_y:.3f}")
+                if self.current_waypoint == stop_waypoint:
                     if ((self.stop_xy[self.stop_num,0] < local_x) and (local_x < self.stop_xy[self.stop_num,1]) and (self.stop_xy[self.stop_num,2] < local_y) and (local_y < self.stop_xy[self.stop_num,3])):
                         self.stop = True
-                        self.get_logger().info("Stop flag reset to True")
-                        self.send_action_request()
+                        target_yaw = int(self.stop_xy[self.stop_num, 4])
+                        # 停止したGlobal座標を取得(debug)
+                        global_x = self.ekf_position_x
+                        global_y = self.ekf_position_y
+                        self.get_logger().info(f"STOP! waypoint={self.current_waypoint}, "f"stop_num={self.stop_num},"f"global_x={global_x:.3f},"f"global_y={global_y:.3f}")
+                        self.get_logger().info(f"""
+                            STOP DEBUG
+                            current_waypoint = {self.current_waypoint}
+                            waypoint_x = {self.waypoints[0, self.current_waypoint]:.3f}
+                            waypoint_y = {self.waypoints[1, self.current_waypoint]:.3f}
+
+                            local_x = {local_x:.3f}
+                            local_y = {local_y:.3f}
+
+                            match_x = {best_candidate["x"]:.3f}
+                            match_y = {best_candidate["y"]:.3f}
+
+                            robot_x = {self.fused_msg.pose.pose.position.x:.3f}
+                            robot_y = {self.fused_msg.pose.pose.position.y:.3f}
+
+                            stop_xmin = {self.stop_xy[self.stop_num,0]:.3f}
+                            stop_xmax = {self.stop_xy[self.stop_num,1]:.3f}
+                            """
+                        )
+                        stop_wp = int(self.stop_xy[self.stop_num, 5])
+                        # 今回の停止地点について、相手側への通知が未送信なら通知
+                        if stop_wp not in self.notified_stop_wps:
+                            stop_wp_msg = std_msgs.Int32()
+                            stop_wp_msg.data = stop_wp
+                            self.skip_path_stop_pub.publish(stop_wp_msg)
+                            self.notified_stop_wps.add(stop_wp)
+                        self.publish_stop_position(global_x, global_y)
+                        self.send_action_request(target_yaw)
+                        # 次のwaypointへ
                         self.current_waypoint += 1
-                        self.last_stop_waypoint = self.current_waypoint
-                        self.stop_num = self.stop_num + 1;
+                        # 次の停止条件へ
+                        self.stop_num += 1
             match_percentage = best_candidate["score"] # score / total_score
         else:
             ref_slam_xyz = [None, None, None]
@@ -481,7 +656,7 @@ class WaypointManagerMaprun(Node):
         self.ref_slam_diff = [ref_slam_x - ekf_match_position_x, ref_slam_y - ekf_match_position_y, 0]
         odom_ref_slam_msg = odometry_msg(ref_slam_x, ref_slam_y, position_z, theta_x, theta_y, theta_z + self.angle_offset, t_stamp, 'odom')
         #self.odom_ref_slam_publisher.publish(odom_ref_slam_msg)
-        
+        '''
         if match_percentage > self.match_per_threshold: # high priority matching 0.35? 0.4?
             delta_x = position_x - self.last_ekf_match_x
             delta_y = position_y - self.last_ekf_match_y
@@ -506,6 +681,34 @@ class WaypointManagerMaprun(Node):
             estimate_x = self.last_match_x + delta_x
             estimate_y = self.last_match_y + delta_y
             self.GpsXY = np.array([estimate_x, estimate_y])
+        '''
+        if match_percentage > self.match_per_threshold:
+            #self.GpsXY = np.array([ref_slam_x, ref_slam_y])
+            self.get_logger().info(f"!!!!!high priority matching: {match_percentage}!!!!!")
+            self.last_match_x = ref_slam_x
+            self.last_match_y = ref_slam_y
+            self.last_ekf_match_x = position_x
+            self.last_ekf_match_y = position_y
+            # 信頼できるマッチング位置を新しい基準にする
+            self.ref_slam_track_x = ref_slam_x
+            self.ref_slam_track_y = ref_slam_y
+            # マッチング開始時のオドメトリ位置を基準にする。
+            # シングルスレッドでは、マッチング中に
+            # get_odom() が実行されないため、この位置から
+            # 処理終了後の移動量を取得できる。
+            self.ref_slam_odom_x = position_x
+            self.ref_slam_odom_y = position_y
+            self.ref_slam_track_initialized = True
+            # マッチング直後の位置も従来どおり配信
+            #self.odom_ref_slam_publisher.publish(odom_ref_slam_msg)
+
+        else:
+            delta_x = position_x - self.last_ekf_match_x
+            delta_y = position_y - self.last_ekf_match_y
+            estimate_x = self.last_match_x + delta_x
+            estimate_y = self.last_match_y + delta_y
+            self.GpsXY = np.array([estimate_x, estimate_y])
+            self.ref_slam_track_initialized = False
         '''
         if match_percentage > self.match_per_threshold: # high priority matching 0.35? 0.4?
             self.GpsXY = np.array([ref_slam_x, ref_slam_y ])
@@ -572,16 +775,16 @@ class WaypointManagerMaprun(Node):
         return img
 
     # サーバーにアクションを送信する関数
-    def send_action_request(self):
+    def send_action_request(self, target_yaw=-90):
         goal_msg = StopFlag.Goal()
 
         # stop変数の状態でaの値を決定
         if self.stop: # True
             goal_msg.a = 1  # stop
+            goal_msg.b = target_yaw
         else: # False
             goal_msg.a = 0  # go
-            
-        goal_msg.b = 2  # 任意の値を設定
+            goal_msg.b = 0
 
         # アクションサーバーが利用可能になるまで待機
         self.action_client.wait_for_server()
@@ -618,8 +821,8 @@ class WaypointManagerMaprun(Node):
         #position_x=self.ekf_position_x; position_y=self.ekf_position_y; 
         theta_x=self.theta_x; theta_y=self.theta_y; theta_z=self.theta_z #-self.angle_offset;
         ###### ekf position ######
-        #position_x=self.ekf_position_x; position_y=self.ekf_position_y; 
-        position_x=self.fused_msg.pose.pose.position.x; position_y=self.fused_msg.pose.pose.position.y; 
+        position_x=self.ekf_position_x; position_y=self.ekf_position_y; 
+        #position_x=self.fused_msg.pose.pose.position.x; position_y=self.fused_msg.pose.pose.position.y; 
         #theta_x=self.ekf_theta_x; theta_y=self.ekf_theta_y; theta_z=self.ekf_theta_z-self.angle_offset;
         flio_q_x = self.fused_msg.pose.pose.orientation.x
         flio_q_y = self.fused_msg.pose.pose.orientation.y
@@ -648,10 +851,15 @@ class WaypointManagerMaprun(Node):
         #self.get_logger().info('####### waypoint_theta : %f #######' % (waypoint_theta))
         
         #set judge dist
-        if 39 <= self.current_waypoint <= 42:
-            waypoint_range = 4.5
-        else:
-            waypoint_range = self.waypoint_range
+        waypoint_range = self.waypoint_range
+        waypoint_range_list = self.waypoint_range_list[self.waypoint_range_list[:, 0] == self.current_waypoint]
+
+        if len(waypoint_range_list) > 0:
+            waypoint_range = waypoint_range_list[0, 1]
+        #if 36 <= self.current_waypoint <= 37:
+        #    waypoint_range = 1.5
+        #else:
+        #    waypoint_range = self.waypoint_range
         #if abs(waypoint_theta) > 90:
         #    waypoint_range = self.waypoint_range
         #else:
@@ -747,9 +955,12 @@ class WaypointManagerMaprun(Node):
         self.label_marker_pub.publish(label_array)
         
     def get_odom(self, msg):
-        self.position_x = msg.pose.pose.position.x
-        self.position_y = msg.pose.pose.position.y
+        x = msg.pose.pose.position.x
+        y = msg.pose.pose.position.y
+        self.position_x = x
+        self.position_y = y
         self.position_z = msg.pose.pose.position.z
+        #self.get_logger().info(f"[get_odom] x={self.position_x:.3f}, "f"y={self.position_y:.3f}")
         
         flio_q_x = msg.pose.pose.orientation.x
         flio_q_y = msg.pose.pose.orientation.y
@@ -760,6 +971,24 @@ class WaypointManagerMaprun(Node):
         self.theta_x = 0 #roll /math.pi*180
         self.theta_y = 0 #pitch /math.pi*180
         self.theta_z = yaw /math.pi*180
+        if self.ref_slam_track_initialized:
+            dx = x - self.ref_slam_odom_x
+            dy = y - self.ref_slam_odom_y
+            self.ref_slam_track_x += dx
+            self.ref_slam_track_y += dy
+
+            # 次回の差分計算の基準を更新
+            self.ref_slam_odom_x = x
+            self.ref_slam_odom_y = y
+
+            # 他の処理でも最新の推定位置を参照できるようにする
+            self.ref_slam_x_buff = self.ref_slam_track_x
+            self.ref_slam_y_buff = self.ref_slam_track_y
+
+            # 最新の推定位置を /odom_ref_slam として配信
+            odom_ref_slam_msg = odometry_msg(self.ref_slam_track_x, self.ref_slam_track_y, self.position_z, self.theta_x, self.theta_y, self.theta_z + self.angle_offset, msg.header.stamp, 'odom')
+            self.GpsXY = np.array([self.ref_slam_track_x, self.ref_slam_track_y])
+            self.odom_ref_slam_publisher.publish(odom_ref_slam_msg)
         
         ########### ekf ###########
         # current_time = self.get_clock().now().to_msg()
@@ -782,6 +1011,43 @@ class WaypointManagerMaprun(Node):
             self.Speed = 0
         self.prev_pos = current_pos
         self.is_initialized = True # 初期化フラグを立てる
+
+        if self.current_waypoint >= 437: # after siyakusyo oudanhodou2
+            if self.stop_num <= 14:
+                self.stop_num = 15
+        elif self.current_waypoint >= 420: # after dourotan6
+            if self.stop_num <= 13:
+                self.stop_num = 14
+        elif self.current_waypoint >= 414: # after dourotan5
+            if self.stop_num <= 12:
+                self.stop_num = 13
+        elif self.current_waypoint >= 380: # after dourotan4
+            if self.stop_num <= 11:
+                self.stop_num = 12
+        elif self.current_waypoint >= 362: # after singou2
+            if self.stop_num <= 10:
+                self.stop_num = 11
+        elif self.current_waypoint >= 307: # after 90do dourotan2
+            if self.stop_num <= 8:
+                self.stop_num = 9
+        elif self.current_waypoint >= 202: # after 90do dourotan2
+            if self.stop_num <= 7:
+                self.stop_num = 8
+        elif self.current_waypoint >= 154: # after singou1
+            if self.stop_num <= 6:
+                self.stop_num = 7
+        elif self.current_waypoint >= 130: # after dourotan3
+            if self.stop_num <= 4:
+                self.stop_num = 5
+        elif self.current_waypoint >= 100: # after dourotan2 
+            if self.stop_num <= 3:
+                self.stop_num = 4
+        elif self.current_waypoint >= 93: # after dourotan1
+            if self.stop_num <= 2:
+                self.stop_num = 3
+        elif self.current_waypoint >= 79: # after siyakusyo oudanhodou2
+            if self.stop_num <= 1:
+                self.stop_num = 2
         
     def get_ekf_odom(self, msg):
         self.ekf_position_x = msg.pose.pose.position.x + self.start_position_init_x
@@ -1007,11 +1273,103 @@ class WaypointManagerMaprun(Node):
             cv2.circle(result_copy, max_loc, 30, -1, thickness=-1)
 
         return candidates
+    
+    def masked_match_template_global(self, global_img, local_img, global_mask, method):
+        """
+        global_mask == 1 の画素だけを照合スコアに使用する。
+        global_mask == 0 の画素はスコア計算から除外する。
+        """
+
+        global_img = global_img.astype(np.float32)
+        local_img = local_img.astype(np.float32)
+        global_mask = global_mask.astype(np.float32)
+
+        h, w = local_img.shape
+        ones = np.ones((h, w), dtype=np.float32)
+
+        # 各候補位置での有効画素数
+        n = cv2.matchTemplate(
+            global_mask, ones, cv2.TM_CCORR
+        )
+
+        # 有効画素に限定した global 側の総和・二乗和
+        masked_global = global_img * global_mask
+
+        sum_g = cv2.matchTemplate(
+            masked_global, ones, cv2.TM_CCORR
+        )
+        sum_g2 = cv2.matchTemplate(
+            global_img ** 2 * global_mask, ones, cv2.TM_CCORR
+        )
+
+        # 有効画素に限定した local 側の総和・二乗和
+        sum_t = cv2.matchTemplate(
+            global_mask, local_img, cv2.TM_CCORR
+        )
+        sum_t2 = cv2.matchTemplate(
+            global_mask, local_img ** 2, cv2.TM_CCORR
+        )
+
+        # 有効画素に限定した積和
+        sum_gt = cv2.matchTemplate(
+            masked_global, local_img, cv2.TM_CCORR
+        )
+
+        eps = 1e-6
+
+        if method == cv2.TM_CCOEFF_NORMED:
+            # マスク付き zero-mean normalized cross-correlation
+            numerator = sum_gt - sum_g * sum_t / (n + eps)
+
+            var_g = np.maximum(
+                sum_g2 - sum_g ** 2 / (n + eps), 0
+            )
+            var_t = np.maximum(
+                sum_t2 - sum_t ** 2 / (n + eps), 0
+            )
+
+            denominator = np.sqrt(var_g * var_t)
+            result = numerator / (denominator + eps)
+
+        elif method == cv2.TM_CCORR_NORMED:
+            # マスク付き normalized cross-correlation
+            denominator = np.sqrt(sum_g2 * sum_t2)
+            result = sum_gt / (denominator + eps)
+
+        else:
+            raise ValueError("Unsupported template matching method")
+
+        # 有効画素が少なすぎる候補は無効化する
+        min_valid_pixels = 0.5 * h * w
+        result[n < min_valid_pixels] = -1.0
+
+        # NaN / Inf 対策
+        result = np.nan_to_num(
+            result, nan=-1.0, posinf=-1.0, neginf=-1.0
+        )
+
+        return result
 
     def get_topk_template_matches_multilayer(self, global_ground, global_mid, global_high, local_ground, local_mid, local_high, pixel, global_map_range, local_map_range, position_map,top_k=5):
         # --------------------------
         # layer matching
         # --------------------------
+        # 右半分を除外する waypoint
+        exclude_right_waypoints = self.right_half_exclude_waypoints
+
+        '''
+        if self.current_waypoint in exclude_right_waypoints:
+            # global map の右半分を無効化
+            global_mask = np.ones(global_ground.shape, dtype=np.float32)
+            global_mask[:, global_ground.shape[1] // 2:] = 0.0
+            res_ground = self.masked_match_template_global(global_ground, local_ground, global_mask, cv2.TM_CCOEFF_NORMED)
+            res_mid = self.masked_match_template_global(global_mid, local_mid, global_mask, cv2.TM_CCORR_NORMED)
+            res_high = self.masked_match_template_global(global_high, local_high, global_mask, cv2.TM_CCORR_NORMED)
+        else:
+            res_ground = cv2.matchTemplate(global_ground, local_ground, cv2.TM_CCOEFF_NORMED)
+            res_mid = cv2.matchTemplate(global_mid, local_mid, cv2.TM_CCORR_NORMED)
+            res_high = cv2.matchTemplate(global_high, local_high, cv2.TM_CCORR_NORMED)
+        '''
         res_ground = cv2.matchTemplate(global_ground, local_ground, cv2.TM_CCOEFF_NORMED)
         res_mid = cv2.matchTemplate(global_mid, local_mid, cv2.TM_CCORR_NORMED)
         res_high = cv2.matchTemplate(global_high, local_high, cv2.TM_CCORR_NORMED)
@@ -1050,8 +1408,8 @@ class WaypointManagerMaprun(Node):
         else:
             rel_mid  = occ_mid
             rel_high = occ_high
-        confidence_mid  = min(1.0, rel_mid  / 0.3)
-        confidence_high = min(1.0, rel_high / 0.3)
+        confidence_mid  = min(1.0, rel_mid)
+        confidence_high = min(1.0, rel_high)
 
         score_mid  = psr_mid  * confidence_mid
         score_high = psr_high * confidence_high
@@ -1132,13 +1490,18 @@ class WaypointManagerMaprun(Node):
         return peak_score
 
     def verify_candidates_multi_layer(self, candidates):
+        if self.current_waypoint != self.last_matching_waypoint:
+            self.relocalization_mode = True
+            self.last_matching_waypoint = self.current_waypoint
         best_candidate = None
         best_score = -999
 
         for cand in candidates:
-            dist = np.sqrt((cand["x"] - self.ref_slam_x_buff)**2 + (cand["y"] - self.ref_slam_y_buff)**2)
+            #dist = np.sqrt((cand["x"] - self.ref_slam_x_buff)**2 + (cand["y"] - self.ref_slam_y_buff)**2)
+            dist = np.sqrt((cand["x"] - self.ekf_position_x)**2 + (cand["y"] - self.ekf_position_y)**2)
 
-            if dist > self.match_dist: # 1.0
+            # 通常時だけ1.5 mの距離制限を適用
+            if dist > self.match_dist:
                 continue
 
             if cand["score"] > best_score:
@@ -1183,6 +1546,46 @@ class WaypointManagerMaprun(Node):
         score = np.flipud(score)
         occ.data = score.flatten().tolist()
         return occ
+    
+    def publish_stop_position(self, x, y):
+        # ==========================================
+        # PointStamped
+        # ==========================================
+        point_msg = PointStamped()
+
+        point_msg.header.stamp = self.get_clock().now().to_msg()
+        point_msg.header.frame_id = "map"
+
+        point_msg.point.x = x
+        point_msg.point.y = y
+        point_msg.point.z = 0.0
+
+        self.stop_global_pub.publish(point_msg)
+
+        # ==========================================
+        # Marker
+        # ==========================================
+        marker = Marker()
+        marker.header.stamp = point_msg.header.stamp
+        marker.header.frame_id = "odom"
+        marker.ns = "stop_position"
+        marker.id = self.stop_num
+        marker.type = Marker.SPHERE
+        marker.action = Marker.ADD
+        marker.pose.position.x = x
+        marker.pose.position.y = y
+        marker.pose.position.z = 0.2
+        marker.pose.orientation.w = 1.0
+        marker.scale.x = 0.5
+        marker.scale.y = 0.5
+        marker.scale.z = 0.5
+        marker.color.a = 0.9
+        marker.color.r = 0.0
+        marker.color.g = 1.0
+        marker.color.b = 0.0
+        marker.lifetime.sec = 0
+
+        self.stop_marker_pub.publish(marker)
 
 def crop_center(image, crop_width, crop_height): 
     # 画像の高さと幅を取得 

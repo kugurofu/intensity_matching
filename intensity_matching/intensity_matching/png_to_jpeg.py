@@ -2,7 +2,7 @@ import os
 from PIL import Image
 
 # 対象のフォルダパスを指定
-folder_path = os.path.expanduser('~/ros2_ws/src/map/tsukuba_full_1003_1')
+folder_path = os.path.expanduser('~/ros2_ws/src/map/test_tsukuba')
 
 # フォルダ内のpngファイルを検索し、jpegに変換
 for filename in os.listdir(folder_path):

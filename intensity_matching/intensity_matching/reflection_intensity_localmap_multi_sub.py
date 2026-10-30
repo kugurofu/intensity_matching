@@ -29,9 +29,9 @@ import pandas as pd
 from cv_bridge import CvBridge
 import time
 
-class ObsBayesMap(Node):
+class ReflectionLocalMap(Node):
     def __init__(self):
-        super().__init__('obs_bayes_map')
+        super().__init__('reflection_local_map')
 
         qos_profile = QoSProfile(
             history=QoSHistoryPolicy.KEEP_LAST,
@@ -1166,7 +1166,7 @@ def grid_map_set(map_x, map_y, data, position, map_pixel, map_range):
 
 def main():
     rclpy.init()
-    node = ObsBayesMap()
+    node = ReflectionLocalMap()
     executor = MultiThreadedExecutor(num_threads=4)
     executor.add_node(node)
     executor.spin()

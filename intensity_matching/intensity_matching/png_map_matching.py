@@ -162,7 +162,10 @@ class WaypointManagerMaprun(Node):
             129: [0.0, 1.0],  # waypoint_number 14だけy方向に-2 m
             143: [2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
             144: [2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
-            148: [-2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
+            145: [1.0, 0.0],  # waypoint_number 14だけy方向に-2 m
+            146: [1.0, 0.0],  # waypoint_number 14だけy方向に-2 m
+            147: [1.0, 0.0],  # waypoint_number 14だけy方向に-2 m
+            148: [-1.0, 0.0],  # waypoint_number 14だけy方向に-2 m
             149: [-2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
             150: [-2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
             155: [0.5, 0.0],  # waypoint_number 14だけy方向に-2 m
@@ -188,7 +191,7 @@ class WaypointManagerMaprun(Node):
             348: [-1.0, 0.0],  # waypoint_number 14だけy方向に-2 m
             349: [0.0, 0.0],  # waypoint_number 14だけy方向に-2 m
             351: [-2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
-            352: [-2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
+            352: [-1.0, 0.0],  # waypoint_number 14だけy方向に-2 m
             353: [0.5, 0.0],  # waypoint_number 14だけy方向に-2 m
             354: [1.5, 3.0],  # waypoint_number 14だけy方向に-2 m
             378: [-2.0, 0.0],  # waypoint_number 14だけy方向に-2 m
